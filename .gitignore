@@ -11,4 +11,8 @@ dist/
 build/
 *.egg-info/
 .superpowers/
-.workgraph
+.workgraph/
+.wg-worktrees/
+reports/
+output/
+*.log

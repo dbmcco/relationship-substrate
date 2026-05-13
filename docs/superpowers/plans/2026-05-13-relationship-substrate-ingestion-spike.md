@@ -1400,3 +1400,24 @@ Known follow-up after this plan:
 - Live model proposal path through the central registry.
 - Self-identity alias model for Braydon's historical email accounts.
 - Domain/name identity candidates beyond exact email.
+
+## Implementation Status (2026-05-13)
+
+This first spike has been implemented in code with:
+
+- Python package + CLI scaffold (`migrate`, `profile-msgvault`, `export-operating-picture`).
+- Postgres/pgvector migration runner and initial schema.
+- Source event contracts preserving `curated_export + unknown_upstream`.
+- msgvault query adapter for sender profiling.
+- Next Up workbook adapter for curated contact seed events.
+- Exact-email curated-contact materialization into canonical `person` + `contact_channel`.
+- State System-compatible operating-picture JSON builder.
+- Automated tests for contracts, migration, idempotent source event upsert, adapter parsing, materialization, and read-model shape.
+
+Follow-up Workgraph tasks created from remaining first-spike scope:
+
+- `implement-calendar-ingestion` (calendar evidence ingestion adapter).
+- `implement-live-model` (registry-routed live model proposal path).
+- `model-self-identity` (self alias/account modeling).
+- `implement-db-backed` (DB-backed top-25 export query).
+- `add-domain-name` (domain/name identity candidate matching).

@@ -261,3 +261,24 @@ Required checks:
 - Define self-identity model for Braydon's known email aliases and source accounts.
 - Define the exact State System-compatible `relationship_operating_picture` schema.
 - Decide whether the first model proposal path is fixture-only or uses live model calls behind the central registry.
+
+## 12. Implementation Addendum (2026-05-13)
+
+The initial ingestion spike implementation landed with:
+
+- Python CLI/library scaffold and project metadata.
+- Committed SQL migration + migration runner for the relationship-substrate schema (including pgvector columns).
+- Provenance-preserving source contracts for curated export events (`unknown_upstream` retained).
+- msgvault sender profiling adapter using read-only CLI query output parsing.
+- Next Up workbook ingestion adapter producing curated contact source events.
+- Exact-email materialization for canonical `person` and `contact_channel` records only (no semantic relationship-health judgment).
+- Operating-picture JSON read-model generator with State System-compatible envelope.
+- Test coverage for replay/idempotency, provenance posture, adapter parsing, materialization, and read-model shape.
+
+Deferred follow-up tasks were explicitly created in Workgraph:
+
+- `implement-calendar-ingestion`
+- `implement-live-model`
+- `model-self-identity`
+- `implement-db-backed`
+- `add-domain-name`
