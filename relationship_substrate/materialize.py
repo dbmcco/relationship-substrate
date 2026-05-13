@@ -5,7 +5,7 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
-from relationship_substrate.repositories import get_source_event
+from relationship_substrate.repositories import get_source_event, list_source_events
 
 
 def _clean_email(value: object) -> str | None:
@@ -16,6 +16,9 @@ def _clean_email(value: object) -> str | None:
 
 
 def _display_name(payload: dict) -> str:
+    full_name = str(payload.get("full_name") or "").strip()
+    if full_name:
+        return full_name
     first = str(payload.get("first_name") or "").strip()
     last = str(payload.get("last_name") or "").strip()
     name = " ".join(part for part in [first, last] if part)
@@ -63,3 +66,24 @@ def materialize_curated_contact(database_url: str, source_event_id: UUID) -> UUI
             )
         conn.commit()
     return person_id
+
+
+def materialize_exact_emails(database_url: str, *, source_name: str = "next_up") -> dict[str, int | str]:
+    events = list_source_events(
+        database_url,
+        source_name=source_name,
+        source_event_type="curated_contact",
+    )
+    stats = {
+        "source": source_name,
+        "events_seen": len(events),
+        "materialized": 0,
+        "skipped_missing_email": 0,
+    }
+    for event in events:
+        if _clean_email(event["source_payload"].get("email")) is None:
+            stats["skipped_missing_email"] += 1
+            continue
+        materialize_curated_contact(database_url, event["id"])
+        stats["materialized"] += 1
+    return stats

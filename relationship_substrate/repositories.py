@@ -69,3 +69,94 @@ def get_source_event(database_url: str, source_event_id: UUID) -> dict:
         "source_posture": row[2],
         "provenance_status": row[3],
     }
+
+
+def list_source_events(
+    database_url: str,
+    *,
+    source_name: str,
+    source_event_type: str | None = None,
+) -> list[dict]:
+    filters = ["source_name = %s"]
+    params: list[object] = [source_name]
+    if source_event_type is not None:
+        filters.append("source_event_type = %s")
+        params.append(source_event_type)
+    where = " AND ".join(filters)
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT id, source_payload, source_posture, provenance_status
+                FROM relationship_substrate.source_event
+                WHERE {where}
+                ORDER BY observed_at, source_event_key
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            "id": row[0],
+            "source_payload": row[1],
+            "source_posture": row[2],
+            "provenance_status": row[3],
+        }
+        for row in rows
+    ]
+
+
+def operating_picture_rows(database_url: str, *, limit: int = 25) -> list[dict]:
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                  p.id,
+                  p.display_name,
+                  p.primary_email,
+                  COALESCE(e.interaction_count, 0) AS interaction_count,
+                  e.last_interaction_at,
+                  p.source_posture,
+                  p.provenance_status,
+                  p.metadata
+                FROM relationship_substrate.person p
+                LEFT JOIN relationship_substrate.relationship_edge e
+                  ON e.person_id = p.id
+                ORDER BY COALESCE(e.interaction_count, 0) DESC, p.updated_at DESC, p.display_name
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            "person_id": str(row[0]),
+            "display_name": row[1],
+            "primary_email": row[2],
+            "interaction_count": row[3],
+            "last_interaction_at": row[4].isoformat() if row[4] else None,
+            "source_posture": row[5],
+            "provenance_status": row[6],
+            "metadata": row[7],
+        }
+        for row in rows
+    ]
+
+
+def substrate_counts(database_url: str) -> dict[str, int]:
+    tables = [
+        "source_event",
+        "person",
+        "contact_channel",
+        "identity_candidate",
+        "interaction",
+        "relationship_edge",
+    ]
+    counts: dict[str, int] = {}
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            for table in tables:
+                cur.execute(f"SELECT count(*) FROM relationship_substrate.{table}")
+                counts[table] = cur.fetchone()[0]
+    return counts

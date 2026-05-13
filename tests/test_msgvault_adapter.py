@@ -3,21 +3,24 @@ from relationship_substrate.config import Settings
 
 
 def test_parse_query_output_returns_rows():
-    payload = {
-        "columns": ["from_email", "message_count"],
-        "rows": [["person@example.com", 7]],
-        "row_count": 1,
-    }
+    payload = [{"key": "person@example.com", "count": 7, "total_size": 100}]
 
-    rows = parse_query_output(payload)
+    rows = parse_query_output(payload, key_name="email")
 
-    assert rows == [{"from_email": "person@example.com", "message_count": 7}]
+    assert rows == [
+        {
+            "email": "person@example.com",
+            "message_count": 7,
+            "total_size": 100,
+            "attachment_size": 0,
+        }
+    ]
 
 
-def test_sender_query_command_uses_msgvault_read_only_cli():
+def test_sender_command_uses_supported_msgvault_analytics_cli():
     adapter = MsgvaultAdapter(Settings())
 
-    command = adapter.build_query_command("SELECT * FROM v_senders LIMIT 1")
+    command = adapter.build_sender_command(10)
 
     assert command[:5] == [
         "/Users/braydon/.local/bin/msgvault",
@@ -26,4 +29,12 @@ def test_sender_query_command_uses_msgvault_read_only_cli():
         "--config",
         "/Volumes/data2/msgvault/config.toml",
     ]
-    assert command[-3:] == ["query", "--format", "json"]
+    assert command[-4:] == ["list-senders", "--json", "--limit", "10"]
+
+
+def test_domain_command_uses_supported_msgvault_analytics_cli():
+    adapter = MsgvaultAdapter(Settings())
+
+    command = adapter.build_domain_command(5)
+
+    assert command[-4:] == ["list-domains", "--json", "--limit", "5"]
