@@ -205,6 +205,10 @@ def test_history_backed_organization_worklist_excludes_known_non_target_domains_
                 "message_count": 40,
             },
             {"email": "three@lehigh.edu", "display_name": "Lehigh Person", "message_count": 30},
+            {"email": "four@go2impact.com", "display_name": "Impact Person", "message_count": 20},
+            {"email": "five@intempio.us", "display_name": "Intempio US Person", "message_count": 10},
+            {"email": "six@intempio.com", "display_name": "Intempio Person", "message_count": 9},
+            {"email": "seven@mcco.us", "display_name": "MCCO Person", "message_count": 8},
         ],
         self_aliases=set(),
         skipped_domains=set(),
@@ -217,3 +221,7 @@ def test_history_backed_organization_worklist_excludes_known_non_target_domains_
     assert "rvibe.com" not in domains
     assert "thepracticalaccountant.com" not in domains
     assert "lehigh.edu" not in domains
+    assert "go2impact.com" not in domains
+    assert "intempio.us" not in domains
+    assert "intempio.com" not in domains
+    assert "mcco.us" not in domains
