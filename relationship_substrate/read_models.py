@@ -43,6 +43,7 @@ def build_relationship_operating_picture(rows: list[dict[str, Any]]) -> dict[str
                     "last_interaction_at": row.get("last_interaction_at"),
                     "source_posture": row.get("source_posture"),
                     "provenance_status": row.get("provenance_status"),
+                    "unresolved_identity_candidates": row.get("unresolved_identity_candidates", 0),
                 },
             }
             for row in rows

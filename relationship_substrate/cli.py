@@ -9,8 +9,14 @@ from relationship_substrate.adapters.msgvault import MsgvaultAdapter
 from relationship_substrate.config import Settings
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
+from relationship_substrate.identity import generate_identity_candidates
 from relationship_substrate.materialize import materialize_exact_emails, materialize_msgvault_senders
-from relationship_substrate.repositories import operating_picture_rows, substrate_counts, upsert_source_event
+from relationship_substrate.repositories import (
+    identity_candidate_counts,
+    operating_picture_rows,
+    substrate_counts,
+    upsert_source_event,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     materialize = subparsers.add_parser("materialize-exact-emails")
     materialize.add_argument("--source", default="next_up")
     subparsers.add_parser("materialize-msgvault-senders")
+    subparsers.add_parser("generate-identity-candidates")
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -168,6 +175,13 @@ def operating_picture_from_db(database_url: str, *, limit: int) -> dict:
     return build_relationship_operating_picture(operating_picture_rows(database_url, limit=limit))
 
 
+def generate_identity_candidate_report(database_url: str) -> dict[str, int | str]:
+    run_migrations(database_url)
+    report = generate_identity_candidates(database_url)
+    report.update(identity_candidate_counts(database_url))
+    return report
+
+
 def run_local_eval(
     settings: Settings,
     *,
@@ -178,7 +192,11 @@ def run_local_eval(
 ) -> dict:
     run_migrations(settings.database_url)
     next_up = ingest_next_up(settings.database_url, next_up_path)
-    materialization = materialize_exact_emails(settings.database_url, source_name="next_up")
+    materialization = materialize_exact_emails(
+        settings.database_url,
+        source_name="next_up",
+        skipped_domains=set(settings.skipped_sender_domains),
+    )
     msgvault = {}
     msgvault_materialization: dict[str, int | str] = {
         "source": "msgvault",
@@ -198,6 +216,7 @@ def run_local_eval(
         )
         msgvault_materialization = materialize_msgvault_senders(settings.database_url)
         msgvault["sender_ingestion"] = sender_ingestion
+    identity_candidates = generate_identity_candidate_report(settings.database_url)
     picture = operating_picture_from_db(settings.database_url, limit=limit)
     counts = substrate_counts(settings.database_url)
     report = {
@@ -216,6 +235,7 @@ def run_local_eval(
             "domain_candidates": len(msgvault.get("domains", [])) if msgvault else 0,
             "sender_ingestion": msgvault.get("sender_ingestion", {}) if msgvault else {},
         },
+        "identity_candidates": identity_candidates,
         "counts": counts,
         "checks": [
             "Next Up events retain curated_export + unknown_upstream provenance.",
@@ -224,6 +244,7 @@ def run_local_eval(
             "msgvault profiling uses supported read-only analytics commands.",
             "Known self email aliases are skipped before sender profiles become relationship edges.",
             "Known automated/system sender patterns are skipped before sender profiles become relationship edges.",
+            "Identity candidates are generated as unresolved review suggestions; no automatic person merges are performed.",
         ],
     }
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -264,11 +285,20 @@ def main() -> int:
         return 0
     if args.command == "materialize-exact-emails":
         run_migrations(settings.database_url)
-        _print_json(materialize_exact_emails(settings.database_url, source_name=args.source))
+        _print_json(
+            materialize_exact_emails(
+                settings.database_url,
+                source_name=args.source,
+                skipped_domains=set(settings.skipped_sender_domains),
+            )
+        )
         return 0
     if args.command == "materialize-msgvault-senders":
         run_migrations(settings.database_url)
         _print_json(materialize_msgvault_senders(settings.database_url))
+        return 0
+    if args.command == "generate-identity-candidates":
+        _print_json(generate_identity_candidate_report(settings.database_url))
         return 0
     if args.command == "export-operating-picture":
         if args.from_db:

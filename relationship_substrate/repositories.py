@@ -111,6 +111,27 @@ def operating_picture_rows(database_url: str, *, limit: int = 25) -> list[dict]:
         with conn.cursor() as cur:
             cur.execute(
                 """
+                WITH identity_candidate_refs AS (
+                  SELECT ic.candidate_id AS person_id, count(*) AS candidate_count
+                  FROM relationship_substrate.identity_candidate ic
+                  WHERE ic.status = 'candidate'
+                  AND ic.candidate_type = 'person'
+                  AND ic.candidate_id IS NOT NULL
+                  GROUP BY ic.candidate_id
+                  UNION ALL
+                  SELECT (si.metadata->>'person_id')::uuid AS person_id, count(*) AS candidate_count
+                  FROM relationship_substrate.identity_candidate ic
+                  JOIN relationship_substrate.source_identity si
+                    ON si.id = ic.source_identity_id
+                  WHERE ic.status = 'candidate'
+                  AND si.metadata ? 'person_id'
+                  GROUP BY (si.metadata->>'person_id')::uuid
+                ),
+                identity_candidate_totals AS (
+                  SELECT person_id, sum(candidate_count)::int AS candidate_count
+                  FROM identity_candidate_refs
+                  GROUP BY person_id
+                )
                 SELECT
                   p.id,
                   p.display_name,
@@ -119,10 +140,13 @@ def operating_picture_rows(database_url: str, *, limit: int = 25) -> list[dict]:
                   e.last_interaction_at,
                   p.source_posture,
                   p.provenance_status,
-                  p.metadata
+                  p.metadata,
+                  COALESCE(ict.candidate_count, 0) AS unresolved_identity_candidates
                 FROM relationship_substrate.person p
                 LEFT JOIN relationship_substrate.relationship_edge e
                   ON e.person_id = p.id
+                LEFT JOIN identity_candidate_totals ict
+                  ON ict.person_id = p.id
                 ORDER BY COALESCE(e.interaction_count, 0) DESC, p.updated_at DESC, p.display_name
                 LIMIT %s
                 """,
@@ -139,9 +163,30 @@ def operating_picture_rows(database_url: str, *, limit: int = 25) -> list[dict]:
             "source_posture": row[5],
             "provenance_status": row[6],
             "metadata": row[7],
+            "unresolved_identity_candidates": row[8],
         }
         for row in rows
     ]
+
+
+def identity_candidate_counts(database_url: str) -> dict[str, int]:
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT status, count(*)::int
+                FROM relationship_substrate.identity_candidate
+                GROUP BY status
+                """
+            )
+            rows = cur.fetchall()
+    counts = {row[0]: row[1] for row in rows}
+    return {
+        "open_candidates": counts.get("candidate", 0),
+        "accepted_candidates": counts.get("accepted", 0),
+        "rejected_candidates": counts.get("rejected", 0),
+        "superseded_candidates": counts.get("superseded", 0),
+    }
 
 
 def substrate_counts(database_url: str) -> dict[str, int]:

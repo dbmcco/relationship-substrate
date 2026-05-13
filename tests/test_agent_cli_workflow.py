@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 import psycopg
 from openpyxl import Workbook
@@ -110,5 +111,39 @@ def test_agent_cli_eval_local_writes_machine_readable_artifacts(
     assert report["next_up"]["events_seen"] == 1
     assert report["materialization"]["materialized"] >= 1
     assert report["operating_picture"]["relationships"] >= 1
+    assert report["identity_candidates"]["source"] == "identity_candidate"
     assert (output_dir / "eval_report.json").exists()
     assert (output_dir / "relationship_operating_picture.json").exists()
+
+
+def test_agent_cli_generates_identity_candidates(database_url, monkeypatch, capsys):
+    run_migrations(database_url)
+    localpart = f"cliidentitycandidate{uuid4().hex}"
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.person (
+                  display_name, primary_email, source_posture, provenance_status
+                )
+                VALUES
+                  ('CLI Identity Candidate', %s, 'direct_interaction', 'test'),
+                  ('CLI Identity Candidate', %s, 'direct_interaction', 'test')
+                ON CONFLICT (primary_email)
+                DO UPDATE SET display_name = EXCLUDED.display_name
+                """,
+                (f"{localpart}@example.com", f"{localpart}@other.example"),
+            )
+        conn.commit()
+
+    report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "generate-identity-candidates",
+    )
+
+    assert report["source"] == "identity_candidate"
+    assert report["candidate_pairs"] >= 1
+    assert report["open_candidates"] >= 1

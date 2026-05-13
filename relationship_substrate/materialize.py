@@ -15,6 +15,10 @@ def _clean_email(value: object) -> str | None:
     return email or None
 
 
+def _email_domain(email: str) -> str:
+    return email.rsplit("@", 1)[-1]
+
+
 def _display_name(payload: dict) -> str:
     full_name = str(payload.get("full_name") or "").strip()
     if full_name:
@@ -68,21 +72,32 @@ def materialize_curated_contact(database_url: str, source_event_id: UUID) -> UUI
     return person_id
 
 
-def materialize_exact_emails(database_url: str, *, source_name: str = "next_up") -> dict[str, int | str]:
+def materialize_exact_emails(
+    database_url: str,
+    *,
+    source_name: str = "next_up",
+    skipped_domains: set[str] | None = None,
+) -> dict[str, int | str]:
     events = list_source_events(
         database_url,
         source_name=source_name,
         source_event_type="curated_contact",
     )
+    skipped_domains = skipped_domains or set()
     stats = {
         "source": source_name,
         "events_seen": len(events),
         "materialized": 0,
         "skipped_missing_email": 0,
+        "skipped_domain": 0,
     }
     for event in events:
-        if _clean_email(event["source_payload"].get("email")) is None:
+        email = _clean_email(event["source_payload"].get("email"))
+        if email is None:
             stats["skipped_missing_email"] += 1
+            continue
+        if _email_domain(email) in skipped_domains:
+            stats["skipped_domain"] += 1
             continue
         materialize_curated_contact(database_url, event["id"])
         stats["materialized"] += 1

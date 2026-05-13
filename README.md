@@ -62,10 +62,11 @@ uv run relationship-substrate ingest-next-up --path "/Users/braydon/projects/per
 uv run relationship-substrate materialize-exact-emails --source next_up
 uv run relationship-substrate ingest-msgvault-senders --limit 25
 uv run relationship-substrate materialize-msgvault-senders
+uv run relationship-substrate generate-identity-candidates
 uv run relationship-substrate export-operating-picture --from-db --limit 25
 ```
 
-Sender ingestion skips noisy internal/system senders before materialization. Defaults include Braydon's known self aliases, the `intempio.com` sender domain, and common automated local-parts/prefixes such as `events`, `onlinebanking`, `noreply`, `invoice`, and `statement`. Override with:
+Sender ingestion skips noisy internal/system senders before materialization. Exact-email materialization also skips configured domains. Defaults include Braydon's known self aliases, the `intempio.com` domain, and common automated local-parts/prefixes such as `events`, `onlinebanking`, `noreply`, `invoice`, and `statement`. Override with:
 
 ```bash
 RELATIONSHIP_SUBSTRATE_SELF_EMAILS="a@example.com,b@example.com"
@@ -81,3 +82,5 @@ uv run relationship-substrate export-operating-picture
 ```
 
 Current eval interpretation: the CLI now proves that Next Up curated exports can be ingested and materialized with preserved provenance, and msgvault sender/domain profiles can be read through the supported analytics commands. Msgvault sender profiles can also be materialized into aggregate `interaction` and `relationship_edge` rows, skipping known Braydon/self aliases by default. The operating picture remains conservative: direct email counts are interaction evidence, not relationship-health interpretation; rows from Next Up without matching email evidence remain `curated_export + unknown_upstream` identity seeds.
+
+Identity candidates are unresolved review suggestions, not merges. The current candidate pass detects repeated non-generic email localparts across domains, suppresses role accounts such as `events`, `info`, and `hello`, and surfaces open candidate counts in the DB-backed operating picture metadata.
