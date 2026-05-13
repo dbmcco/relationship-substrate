@@ -240,6 +240,16 @@ def test_search_people_can_use_semantic_similarity_without_role_keywords(databas
     materialize_exact_emails(database_url)
     _set_person_embedding(database_url, email=supply_email, embedding=_embedding(1.0))
     _set_person_embedding(database_url, email=unrelated_email, embedding=_embedding(0.0, 1.0))
+    upsert_organization_enrichment(
+        database_url,
+        company_name=company,
+        company_type="test_consultancy",
+        employee_count_min=1234,
+        employee_count_max=1234,
+        employee_count_label="test_fixture",
+        source_name="test_fixture",
+        provenance_status="test",
+    )
 
     results = search_people(
         database_url,
@@ -247,6 +257,8 @@ def test_search_people_can_use_semantic_similarity_without_role_keywords(databas
         semantic_query_embedding=_embedding(1.0),
         company_size_min=10,
         company_size_max=15,
+        actual_employee_count_min=1234,
+        actual_employee_count_max=1234,
         limit=1000,
     )
 

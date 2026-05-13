@@ -727,3 +727,15 @@ def test_agent_cli_exports_history_backed_organization_worklist(
     assert row["direct_people_count"] == 1
     assert row["total_interaction_count"] == 7
     assert row["strongest_people"][0]["email"] == email
+
+    missing_only_report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "export-history-backed-organization-worklist",
+        "--missing-only",
+        "--limit",
+        "1000",
+    )
+    assert any(item["company_name"] == company for item in missing_only_report["companies"])

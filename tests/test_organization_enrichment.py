@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import psycopg
+
 from relationship_substrate.cli import ingest_msgvault_sender_rows
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
@@ -12,6 +14,7 @@ from relationship_substrate.materialize import (
     materialize_msgvault_senders,
 )
 from relationship_substrate.organizations import (
+    upsert_organization_enrichment,
     history_backed_organization_worklist,
     import_organization_enrichments,
     organization_enrichment_worklist,
@@ -225,3 +228,81 @@ def test_history_backed_organization_worklist_excludes_known_non_target_domains_
     assert "intempio.us" not in domains
     assert "intempio.com" not in domains
     assert "mcco.us" not in domains
+
+
+def test_history_backed_organization_worklist_can_return_only_missing_enrichment(database_url):
+    run_migrations(database_url)
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT domain
+                FROM (
+                  SELECT split_part(lower(source_payload->>'email'), '@', 2) AS domain
+                  FROM relationship_substrate.source_event
+                  WHERE nullif(source_payload->>'email', '') IS NOT NULL
+                  UNION
+                  SELECT split_part(lower(primary_email), '@', 2) AS domain
+                  FROM relationship_substrate.person
+                  WHERE primary_email IS NOT NULL
+                ) domains
+                WHERE domain IS NOT NULL
+                AND domain <> ''
+                """
+            )
+            existing_domains = {row[0] for row in cur.fetchall()}
+    run_id = uuid4().hex
+    enriched_company = f"Enriched Queue Co {run_id}"
+    missing_company = f"Missing Queue Co {run_id}"
+    _curated_contact(
+        database_url,
+        email=f"one@enriched-{run_id}.example",
+        title="Medical Communications Consultant",
+        company=enriched_company,
+    )
+    _curated_contact(
+        database_url,
+        email=f"one@missing-{run_id}.example",
+        title="Medical Communications Consultant",
+        company=missing_company,
+    )
+    ingest_msgvault_sender_rows(
+        database_url,
+        [
+            {
+                "email": f"one@enriched-{run_id}.example",
+                "display_name": "Enriched Queue Person",
+                "message_count": 100000,
+            },
+            {
+                "email": f"one@missing-{run_id}.example",
+                "display_name": "Missing Queue Person",
+                "message_count": 99999,
+            },
+        ],
+        self_aliases=set(),
+        skipped_domains=set(),
+    )
+    materialize_msgvault_senders(database_url)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=enriched_company,
+        company_type="public_pharmaceutical_company",
+        employee_count_min=1000,
+        employee_count_max=1000,
+        employee_count_label="1,000",
+        source_name="manual_research",
+        provenance_status="external_research",
+    )
+
+    rows = history_backed_organization_worklist(
+        database_url,
+        limit=1,
+        skipped_domains=existing_domains,
+        missing_enrichment_only=True,
+    )
+
+    current_company_names = {
+        row["company_name"] for row in rows if row["company_name"] in {enriched_company, missing_company}
+    }
+    assert current_company_names == {missing_company}

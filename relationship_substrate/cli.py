@@ -117,6 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     org_worklist.add_argument("--limit", type=int, default=50)
     org_history_worklist = subparsers.add_parser("export-history-backed-organization-worklist")
     org_history_worklist.add_argument("--limit", type=int, default=50)
+    org_history_worklist.add_argument("--missing-only", action="store_true")
     org_import = subparsers.add_parser("import-organization-enrichments")
     org_import.add_argument("--path", required=True)
     export = subparsers.add_parser("export-operating-picture")
@@ -521,6 +522,7 @@ def main() -> int:
             settings.database_url,
             limit=args.limit,
             skipped_domains=set(settings.skipped_sender_domains),
+            missing_enrichment_only=args.missing_only,
         )
         _print_json({"count": len(companies), "companies": companies})
         return 0

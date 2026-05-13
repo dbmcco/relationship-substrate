@@ -221,14 +221,25 @@ def history_backed_organization_worklist(
     *,
     limit: int = 50,
     skipped_domains: set[str] | None = None,
+    missing_enrichment_only: bool = False,
     as_of: datetime | None = None,
 ) -> list[dict[str, Any]]:
     skipped = sorted(DEFAULT_SKIPPED_ORGANIZATION_DOMAINS | set(skipped_domains or set()))
     enrichments = organization_enrichment_by_name(database_url)
+    enriched_names = sorted(enrichments.keys())
+    missing_filter = (
+        "WHERE lower(COALESCE(dc.company_name, d.domain)) <> ALL(%s)"
+        if missing_enrichment_only
+        else ""
+    )
+    params: list[object] = [skipped, skipped]
+    if missing_enrichment_only:
+        params.append(enriched_names)
+    params.append(limit)
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 WITH curated AS (
                   SELECT
                     lower(nullif(source_payload->>'email', '')) AS email,
@@ -377,6 +388,7 @@ def history_backed_organization_worklist(
                   ON ddc.domain = d.domain
                 LEFT JOIN strongest_people sp
                   ON sp.domain = d.domain
+                {missing_filter}
                 ORDER BY
                   COALESCE(ddc.total_interaction_count, 0) DESC,
                   COALESCE(ddc.direct_people_count, 0) DESC,
@@ -384,7 +396,7 @@ def history_backed_organization_worklist(
                   COALESCE(dc.company_name, d.domain)
                 LIMIT %s
                 """,
-                (skipped, skipped, limit),
+                params,
             )
             rows = cur.fetchall()
     worklist: list[dict[str, Any]] = []
@@ -392,6 +404,8 @@ def history_backed_organization_worklist(
         company_name = row[0]
         enrichment = enrichments.get(company_name.lower())
         has_enrichment = enrichment is not None
+        if missing_enrichment_only and has_enrichment:
+            continue
         known_people_count = int(row[2] or 0)
         direct_people_count = int(row[3] or 0)
         total_interaction_count = int(row[4] or 0)
