@@ -84,13 +84,34 @@ def _enrichment_matches_employee_range(
         return False
     employee_min = enrichment.get("employee_count_min")
     employee_max = enrichment.get("employee_count_max")
-    if employee_min is None and employee_max is None:
+    if actual_employee_count_min is not None and employee_min is None:
         return False
-    low = int(employee_min if employee_min is not None else employee_max)
-    high = int(employee_max if employee_max is not None else employee_min)
-    if actual_employee_count_min is not None and high < actual_employee_count_min:
+    if actual_employee_count_max is not None and employee_max is None:
         return False
-    if actual_employee_count_max is not None and low > actual_employee_count_max:
+    if actual_employee_count_min is not None and int(employee_min) < actual_employee_count_min:
+        return False
+    if actual_employee_count_max is not None and int(employee_max) > actual_employee_count_max:
+        return False
+    return True
+
+
+def _enrichment_matches_consultant_count(
+    enrichment: dict[str, Any] | None,
+    *,
+    consultant_count_min: int | None,
+    consultant_count_max: int | None,
+) -> bool:
+    if consultant_count_min is None and consultant_count_max is None:
+        return True
+    if enrichment is None:
+        return False
+    consultant_count = enrichment.get("consultant_count_estimate")
+    if consultant_count is None:
+        return False
+    consultant_count = int(consultant_count)
+    if consultant_count_min is not None and consultant_count < consultant_count_min:
+        return False
+    if consultant_count_max is not None and consultant_count > consultant_count_max:
         return False
     return True
 
@@ -171,6 +192,8 @@ def search_people(
     known_people_at_company_max: int | None = None,
     actual_employee_count_min: int | None = None,
     actual_employee_count_max: int | None = None,
+    consultant_count_min: int | None = None,
+    consultant_count_max: int | None = None,
     semantic_query_embedding: list[float] | None = None,
     sort: str | None = None,
     limit: int = 25,
@@ -219,6 +242,12 @@ def search_people(
             actual_employee_count_max=actual_employee_count_max,
         ):
             continue
+        if not _enrichment_matches_consultant_count(
+            organization_enrichment,
+            consultant_count_min=consultant_count_min,
+            consultant_count_max=consultant_count_max,
+        ):
+            continue
         title = _clean_text(payload.get("title"))
         keyword_matches = _keyword_matches(haystack=title, keywords=keywords)
         if keywords and not keyword_matches:
@@ -231,6 +260,11 @@ def search_people(
             match_reasons.append("semantic_query")
         if known_people_at_company_min is not None or known_people_at_company_max is not None:
             match_reasons.append(f"known_people_at_company:{known_people_at_company_count}")
+        if consultant_count_min is not None or consultant_count_max is not None:
+            consultant_count = (
+                organization_enrichment["consultant_count_estimate"] if organization_enrichment else None
+            )
+            match_reasons.append(f"consultant_count_estimate:{consultant_count}")
 
         results.append(
             {

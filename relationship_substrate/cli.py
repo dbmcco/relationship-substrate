@@ -91,6 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--known-people-at-company-max", "--company-size-max", type=int, default=None)
     search.add_argument("--actual-employee-count-min", type=int, default=None)
     search.add_argument("--actual-employee-count-max", type=int, default=None)
+    search.add_argument("--consultant-count-min", type=int, default=None)
+    search.add_argument("--consultant-count-max", type=int, default=None)
     search.add_argument("--semantic-query", default=None)
     search.add_argument("--semantic-provider", choices=["ollama", "openai", "hash"], default="ollama")
     search.add_argument("--embedding-model", default=None)
@@ -531,6 +533,8 @@ def main() -> int:
             known_people_at_company_max=args.known_people_at_company_max,
             actual_employee_count_min=args.actual_employee_count_min,
             actual_employee_count_max=args.actual_employee_count_max,
+            consultant_count_min=args.consultant_count_min,
+            consultant_count_max=args.consultant_count_max,
             semantic_query_embedding=semantic_query_embedding,
             sort=args.sort,
             limit=args.limit,
@@ -543,6 +547,8 @@ def main() -> int:
                     "known_people_at_company_max": args.known_people_at_company_max,
                     "actual_employee_count_min": args.actual_employee_count_min,
                     "actual_employee_count_max": args.actual_employee_count_max,
+                    "consultant_count_min": args.consultant_count_min,
+                    "consultant_count_max": args.consultant_count_max,
                     "semantic_query": args.semantic_query,
                     "semantic_provider": args.semantic_provider if args.semantic_query else None,
                     "embedding_model": _embedding_model(args.semantic_provider, args.embedding_model)

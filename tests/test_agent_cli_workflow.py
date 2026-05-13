@@ -540,6 +540,8 @@ def test_agent_cli_upserts_organization_enrichment(
         "50000",
         "--employee-count-label",
         "enterprise",
+        "--consultant-count-estimate",
+        "14",
         "--source-name",
         "manual_research",
         "--source-url",
@@ -567,6 +569,30 @@ def test_agent_cli_upserts_organization_enrichment(
     assert enrichment["enrichment"]["company_type"] == "public_pharmaceutical_company"
     assert result["known_people_at_company_count"] == 10
     assert result["organization_enrichment"]["employee_count_label"] == "enterprise"
+    assert result["organization_enrichment"]["consultant_count_estimate"] == 14
+
+    consultant_report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "search-people",
+        "--role-keywords",
+        "medical communications",
+        "--consultant-count-min",
+        "10",
+        "--consultant-count-max",
+        "20",
+        "--limit",
+        "1000",
+    )
+
+    consultant_result = next(
+        row
+        for row in consultant_report["results"]
+        if row["email"] == f"cli-org-0-{localpart}@example.com"
+    )
+    assert "consultant_count_estimate:14" in consultant_result["match_reasons"]
 
 
 def test_agent_cli_exports_and_imports_organization_enrichment_batch(
