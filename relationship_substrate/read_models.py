@@ -4,6 +4,24 @@ from datetime import UTC, datetime
 from typing import Any
 
 
+def _relationship_state(row: dict[str, Any]) -> str:
+    if int(row.get("interaction_count") or 0) > 0:
+        return "uninterpreted_interaction_evidence"
+    return "uninterpreted_identity_seed"
+
+
+def _interpretation(row: dict[str, Any]) -> str:
+    if int(row.get("interaction_count") or 0) > 0:
+        return (
+            "Mechanical interaction evidence is present. "
+            "Relationship health is not interpreted by this read model."
+        )
+    return (
+        "No direct interaction evidence has been materialized for this row. "
+        "This is an identity/context seed, not a relationship-health claim."
+    )
+
+
 def build_relationship_operating_picture(rows: list[dict[str, Any]]) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
     return {
@@ -16,11 +34,8 @@ def build_relationship_operating_picture(rows: list[dict[str, Any]]) -> dict[str
             {
                 "id": f"relationship.{row['person_id']}",
                 "name": row["display_name"],
-                "relationship_state": "uninterpreted_interaction_evidence",
-                "interpretation": (
-                    "Mechanical interaction evidence is present. "
-                    "Relationship health is not interpreted by this read model."
-                ),
+                "relationship_state": _relationship_state(row),
+                "interpretation": _interpretation(row),
                 "evidence_refs": [f"person:{row['person_id']}"],
                 "metadata": {
                     "primary_email": row.get("primary_email"),

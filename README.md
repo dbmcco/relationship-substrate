@@ -60,6 +60,8 @@ Agents can also run each step independently:
 ```bash
 uv run relationship-substrate ingest-next-up --path "/Users/braydon/projects/personal/home_next_up/resources/Intempio CRM people import.xlsx"
 uv run relationship-substrate materialize-exact-emails --source next_up
+uv run relationship-substrate ingest-msgvault-senders --limit 25
+uv run relationship-substrate materialize-msgvault-senders
 uv run relationship-substrate export-operating-picture --from-db --limit 25
 ```
 
@@ -69,4 +71,4 @@ Export the first operating-picture shape:
 uv run relationship-substrate export-operating-picture
 ```
 
-Current eval interpretation: the CLI now proves that Next Up curated exports can be ingested and materialized with preserved provenance, and msgvault sender/domain profiles can be read through the supported analytics commands. The operating picture is intentionally conservative: until msgvault interactions are materialized into `interaction` / `relationship_edge`, rows from Next Up remain `curated_export + unknown_upstream` with no relationship-health judgment.
+Current eval interpretation: the CLI now proves that Next Up curated exports can be ingested and materialized with preserved provenance, and msgvault sender/domain profiles can be read through the supported analytics commands. Msgvault sender profiles can also be materialized into aggregate `interaction` and `relationship_edge` rows, skipping known Braydon/self aliases by default. The operating picture remains conservative: direct email counts are interaction evidence, not relationship-health interpretation; rows from Next Up without matching email evidence remain `curated_export + unknown_upstream` identity seeds.

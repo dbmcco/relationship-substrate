@@ -37,3 +37,24 @@ def test_export_operating_picture_cli_outputs_json(capsys, monkeypatch):
     payload = json.loads(capsys.readouterr().out)
     assert payload["id"] == "relationship_operating_picture.braydon.v1"
     assert payload["relationships"] == []
+
+
+def test_operating_picture_distinguishes_curated_rows_without_interactions():
+    picture = build_relationship_operating_picture(
+        [
+            {
+                "person_id": "person-1",
+                "display_name": "Jane Doe",
+                "primary_email": "jane@example.com",
+                "interaction_count": 0,
+                "last_interaction_at": None,
+                "source_posture": "curated_export",
+                "provenance_status": "unknown_upstream",
+            }
+        ]
+    )
+
+    relationship = picture["relationships"][0]
+
+    assert relationship["relationship_state"] == "uninterpreted_identity_seed"
+    assert "No direct interaction evidence" in relationship["interpretation"]

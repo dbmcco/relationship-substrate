@@ -83,7 +83,7 @@ def test_agent_cli_ingests_materializes_and_exports_from_db(
         row for row in picture["relationships"] if row["metadata"]["primary_email"] == "jane@example.com"
     )
     assert relationship["name"] == "Jane Doe"
-    assert relationship["relationship_state"] == "uninterpreted_interaction_evidence"
+    assert relationship["relationship_state"] == "uninterpreted_identity_seed"
 
 
 def test_agent_cli_eval_local_writes_machine_readable_artifacts(

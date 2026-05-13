@@ -7,8 +7,9 @@ from pathlib import Path
 from relationship_substrate.adapters.next_up import iter_next_up_events
 from relationship_substrate.adapters.msgvault import MsgvaultAdapter
 from relationship_substrate.config import Settings
+from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
-from relationship_substrate.materialize import materialize_exact_emails
+from relationship_substrate.materialize import materialize_exact_emails, materialize_msgvault_senders
 from relationship_substrate.repositories import operating_picture_rows, substrate_counts, upsert_source_event
 
 
@@ -21,10 +22,14 @@ def build_parser() -> argparse.ArgumentParser:
     profile = subparsers.add_parser("profile-msgvault")
     profile.add_argument("--limit", type=int, default=25)
     profile.add_argument("--kind", choices=["senders", "domains", "both"], default="senders")
+    ingest_msgvault = subparsers.add_parser("ingest-msgvault-senders")
+    ingest_msgvault.add_argument("--limit", type=int, default=100)
+    ingest_msgvault.add_argument("--include-self", action="store_true")
     ingest = subparsers.add_parser("ingest-next-up")
     ingest.add_argument("--path", required=True)
     materialize = subparsers.add_parser("materialize-exact-emails")
     materialize.add_argument("--source", default="next_up")
+    subparsers.add_parser("materialize-msgvault-senders")
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -44,6 +49,7 @@ def _settings(args: argparse.Namespace) -> Settings:
             msgvault_binary=settings.msgvault_binary,
             msgvault_home=settings.msgvault_home,
             msgvault_config=settings.msgvault_config,
+            self_email_aliases=settings.self_email_aliases,
         )
     return settings
 
@@ -73,6 +79,60 @@ def profile_msgvault(settings: Settings, *, limit: int, kind: str) -> dict[str, 
     return payload
 
 
+def ingest_msgvault_sender_rows(
+    database_url: str,
+    rows: list[dict[str, object]],
+    *,
+    self_aliases: set[str],
+) -> dict[str, int | str]:
+    run_migrations(database_url)
+    stats = {
+        "source": "msgvault",
+        "events_seen": len(rows),
+        "events_upserted": 0,
+        "skipped_self": 0,
+        "skipped_missing_email": 0,
+    }
+    for row in rows:
+        raw_email = row.get("email")
+        email = str(raw_email or "").strip().lower()
+        if not email:
+            stats["skipped_missing_email"] += 1
+            continue
+        if email in self_aliases:
+            stats["skipped_self"] += 1
+            continue
+        event = SourceEventIn(
+            source_name="msgvault",
+            source_event_type="sender_profile",
+            source_event_key=f"msgvault:sender:{email}",
+            source_payload={
+                "email": email,
+                "display_name": row.get("display_name"),
+                "message_count": int(row.get("message_count") or 0),
+                "total_size": int(row.get("total_size") or 0),
+                "attachment_size": int(row.get("attachment_size") or 0),
+            },
+            source_posture=SourcePosture.DIRECT_INTERACTION,
+            provenance_status="msgvault_profile",
+            trust_role="direct email aggregate",
+        )
+        upsert_source_event(database_url, event)
+        stats["events_upserted"] += 1
+    return stats
+
+
+def ingest_msgvault_senders(
+    settings: Settings,
+    *,
+    limit: int,
+    include_self: bool,
+) -> dict[str, int | str]:
+    rows = MsgvaultAdapter(settings).top_sender_candidates(limit)
+    self_aliases = set() if include_self else set(settings.self_email_aliases)
+    return ingest_msgvault_sender_rows(settings.database_url, rows, self_aliases=self_aliases)
+
+
 def operating_picture_from_db(database_url: str, *, limit: int) -> dict:
     from relationship_substrate.read_models import build_relationship_operating_picture
 
@@ -90,14 +150,30 @@ def run_local_eval(
     run_migrations(settings.database_url)
     next_up = ingest_next_up(settings.database_url, next_up_path)
     materialization = materialize_exact_emails(settings.database_url, source_name="next_up")
+    msgvault = {}
+    msgvault_materialization: dict[str, int | str] = {
+        "source": "msgvault",
+        "events_seen": 0,
+        "materialized": 0,
+        "skipped_missing_email": 0,
+    }
+    if not skip_msgvault:
+        msgvault = profile_msgvault(settings, limit=limit, kind="both")
+        sender_ingestion = ingest_msgvault_sender_rows(
+            settings.database_url,
+            msgvault.get("senders", []),
+            self_aliases=set(settings.self_email_aliases),
+        )
+        msgvault_materialization = materialize_msgvault_senders(settings.database_url)
+        msgvault["sender_ingestion"] = sender_ingestion
     picture = operating_picture_from_db(settings.database_url, limit=limit)
-    msgvault = {} if skip_msgvault else profile_msgvault(settings, limit=limit, kind="both")
     counts = substrate_counts(settings.database_url)
     report = {
         "ok": True,
         "database_url": settings.database_url,
         "next_up": next_up,
         "materialization": materialization,
+        "msgvault_materialization": msgvault_materialization,
         "operating_picture": {
             "relationships": len(picture["relationships"]),
             "path": str(output_dir / "relationship_operating_picture.json"),
@@ -106,6 +182,7 @@ def run_local_eval(
             "skipped": skip_msgvault,
             "sender_candidates": len(msgvault.get("senders", [])) if msgvault else 0,
             "domain_candidates": len(msgvault.get("domains", [])) if msgvault else 0,
+            "sender_ingestion": msgvault.get("sender_ingestion", {}) if msgvault else {},
         },
         "counts": counts,
         "checks": [
@@ -113,6 +190,7 @@ def run_local_eval(
             "Exact-email materialization only creates canonical person/contact_channel records.",
             "Operating picture remains uninterpreted; no relationship-health scoring is performed.",
             "msgvault profiling uses supported read-only analytics commands.",
+            "Known self email aliases are skipped before sender profiles become relationship edges.",
         ],
     }
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -139,12 +217,25 @@ def main() -> int:
     if args.command == "profile-msgvault":
         _print_json(profile_msgvault(settings, limit=args.limit, kind=args.kind))
         return 0
+    if args.command == "ingest-msgvault-senders":
+        _print_json(
+            ingest_msgvault_senders(
+                settings,
+                limit=args.limit,
+                include_self=args.include_self,
+            )
+        )
+        return 0
     if args.command == "ingest-next-up":
         _print_json(ingest_next_up(settings.database_url, Path(args.path)))
         return 0
     if args.command == "materialize-exact-emails":
         run_migrations(settings.database_url)
         _print_json(materialize_exact_emails(settings.database_url, source_name=args.source))
+        return 0
+    if args.command == "materialize-msgvault-senders":
+        run_migrations(settings.database_url)
+        _print_json(materialize_msgvault_senders(settings.database_url))
         return 0
     if args.command == "export-operating-picture":
         if args.from_db:
