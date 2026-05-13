@@ -28,6 +28,7 @@ from relationship_substrate.identity import (
 from relationship_substrate.materialize import (
     materialize_calendar_events,
     materialize_exact_emails,
+    materialize_msgvault_correspondence,
     materialize_msgvault_senders,
 )
 from relationship_substrate.organizations import (
@@ -58,6 +59,9 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_msgvault = subparsers.add_parser("ingest-msgvault-senders")
     ingest_msgvault.add_argument("--limit", type=int, default=100)
     ingest_msgvault.add_argument("--include-self", action="store_true")
+    ingest_msgvault_correspondence = subparsers.add_parser("ingest-msgvault-correspondence")
+    ingest_msgvault_correspondence.add_argument("--email", required=True)
+    ingest_msgvault_correspondence.add_argument("--limit", type=int, default=50)
     ingest = subparsers.add_parser("ingest-next-up")
     ingest.add_argument("--path", required=True)
     ingest_calendar = subparsers.add_parser("ingest-calendar")
@@ -65,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     materialize = subparsers.add_parser("materialize-exact-emails")
     materialize.add_argument("--source", default="next_up")
     subparsers.add_parser("materialize-msgvault-senders")
+    subparsers.add_parser("materialize-msgvault-correspondence")
     subparsers.add_parser("materialize-calendar-events")
     subparsers.add_parser("generate-identity-candidates")
     list_candidates = subparsers.add_parser("list-identity-candidates")
@@ -294,6 +299,50 @@ def ingest_msgvault_senders(
     )
 
 
+def ingest_msgvault_correspondence(
+    settings: Settings,
+    *,
+    email: str,
+    limit: int,
+) -> dict[str, int | str]:
+    normalized_email = email.strip().lower()
+    rows = MsgvaultAdapter(settings).correspondence_messages(normalized_email, limit=limit)
+    stats = {
+        "source": "msgvault",
+        "relationship_email": normalized_email,
+        "events_seen": len(rows),
+        "events_upserted": 0,
+    }
+    for row in rows:
+        message_id = str(row.get("id") or row.get("source_message_id") or "").strip()
+        if not message_id:
+            continue
+        event = SourceEventIn(
+            source_name="msgvault",
+            source_event_type="correspondence_message",
+            source_event_key=f"msgvault:correspondence:{normalized_email}:{message_id}",
+            source_payload=row,
+            source_posture=SourcePosture.DIRECT_INTERACTION,
+            provenance_status="msgvault_message",
+            trust_role="direct email correspondence evidence",
+        )
+        source_event_id = upsert_source_event(settings.database_url, event)
+        upsert_evidence_ref(
+            settings.database_url,
+            source_event_id=source_event_id,
+            ref_type="msgvault_message",
+            ref_value=f"{normalized_email}:{message_id}",
+            metadata={
+                "relationship_email": normalized_email,
+                "msgvault_message_id": message_id,
+                "source_message_id": row.get("source_message_id"),
+                "source_conversation_id": row.get("source_conversation_id"),
+            },
+        )
+        stats["events_upserted"] += 1
+    return stats
+
+
 def operating_picture_from_db(database_url: str, *, limit: int) -> dict:
     from relationship_substrate.read_models import build_relationship_operating_picture
 
@@ -429,6 +478,10 @@ def main() -> int:
             )
         )
         return 0
+    if args.command == "ingest-msgvault-correspondence":
+        run_migrations(settings.database_url)
+        _print_json(ingest_msgvault_correspondence(settings, email=args.email, limit=args.limit))
+        return 0
     if args.command == "ingest-next-up":
         _print_json(ingest_next_up(settings.database_url, Path(args.path)))
         return 0
@@ -448,6 +501,10 @@ def main() -> int:
     if args.command == "materialize-msgvault-senders":
         run_migrations(settings.database_url)
         _print_json(materialize_msgvault_senders(settings.database_url))
+        return 0
+    if args.command == "materialize-msgvault-correspondence":
+        run_migrations(settings.database_url)
+        _print_json(materialize_msgvault_correspondence(settings.database_url))
         return 0
     if args.command == "materialize-calendar-events":
         run_migrations(settings.database_url)

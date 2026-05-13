@@ -129,6 +129,20 @@ def _parse_calendar_time(value: object) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _parse_timestamp(value: object) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def _attendee_email(attendee: object) -> str | None:
     if not isinstance(attendee, dict):
         return None
@@ -404,4 +418,183 @@ def materialize_msgvault_senders(database_url: str) -> dict[str, int | str]:
             continue
         materialize_msgvault_sender(database_url, event["id"])
         stats["materialized"] += 1
+    return stats
+
+
+def _msgvault_relationship_name(payload: dict, email: str) -> str:
+    from_email = _clean_email(payload.get("from_email"))
+    if from_email == email:
+        name = str(payload.get("from_name") or "").strip()
+        if name:
+            return name
+    return _sender_display_name(email)
+
+
+def _msgvault_display_name_source(payload: dict, email: str) -> str:
+    from_email = _clean_email(payload.get("from_email"))
+    name = str(payload.get("from_name") or "").strip()
+    return "from_contact" if from_email == email and name else "email_localpart"
+
+
+def materialize_msgvault_correspondence_event(database_url: str, source_event_id: UUID) -> UUID | None:
+    event = get_source_event(database_url, source_event_id)
+    payload = event["source_payload"]
+    email = _clean_email(payload.get("relationship_email"))
+    if email is None:
+        raise ValueError("msgvault correspondence message requires relationship_email")
+    occurred_at = _parse_timestamp(payload.get("sent_at"))
+
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM relationship_substrate.interaction
+                WHERE source_event_id = %s
+                """,
+                (source_event_id,),
+            )
+            if cur.fetchone() is not None:
+                return None
+
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.person (
+                  display_name, primary_email, source_posture, provenance_status, metadata
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (primary_email)
+                DO UPDATE SET
+                  display_name = CASE
+                    WHEN EXCLUDED.metadata->>'display_name_source' = 'from_contact'
+                    THEN EXCLUDED.display_name
+                    ELSE relationship_substrate.person.display_name
+                  END,
+                  source_posture = EXCLUDED.source_posture,
+                  provenance_status = EXCLUDED.provenance_status,
+                  metadata = relationship_substrate.person.metadata || EXCLUDED.metadata,
+                  updated_at = now()
+                RETURNING id
+                """,
+                (
+                    _msgvault_relationship_name(payload, email),
+                    email,
+                    event["source_posture"],
+                    event["provenance_status"],
+                    Jsonb(
+                        {
+                            "trust_role": "direct email correspondence evidence",
+                            "display_name_source": _msgvault_display_name_source(payload, email),
+                        }
+                    ),
+                ),
+            )
+            person_id = cur.fetchone()[0]
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.contact_channel (
+                  person_id, channel_type, channel_value, source_posture, provenance_status
+                )
+                VALUES (%s, 'email', %s, %s, %s)
+                ON CONFLICT (channel_type, channel_value)
+                DO UPDATE SET
+                  person_id = EXCLUDED.person_id,
+                  source_posture = EXCLUDED.source_posture,
+                  provenance_status = EXCLUDED.provenance_status
+                """,
+                (person_id, email, event["source_posture"], event["provenance_status"]),
+            )
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.interaction (
+                  source_event_id, interaction_type, occurred_at, subject, metadata
+                )
+                VALUES (%s, 'email_message', %s, %s, %s)
+                """,
+                (
+                    source_event_id,
+                    occurred_at,
+                    payload.get("subject"),
+                    Jsonb(
+                        {
+                            "relationship_email": email,
+                            "relationship_direction": payload.get("relationship_direction"),
+                            "from_email": _clean_email(payload.get("from_email")),
+                            "msgvault_message_id": str(payload.get("id") or ""),
+                            "source_message_id": payload.get("source_message_id"),
+                            "source_conversation_id": payload.get("source_conversation_id"),
+                            "snippet": payload.get("snippet"),
+                        }
+                    ),
+                ),
+            )
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.relationship_edge (
+                  person_id, first_interaction_at, last_interaction_at, interaction_count, metadata
+                )
+                VALUES (%s, %s, %s, 1, %s)
+                ON CONFLICT (person_id)
+                DO UPDATE SET
+                  first_interaction_at = LEAST(
+                    COALESCE(
+                      relationship_substrate.relationship_edge.first_interaction_at,
+                      EXCLUDED.first_interaction_at
+                    ),
+                    COALESCE(
+                      EXCLUDED.first_interaction_at,
+                      relationship_substrate.relationship_edge.first_interaction_at
+                    )
+                  ),
+                  last_interaction_at = GREATEST(
+                    COALESCE(
+                      relationship_substrate.relationship_edge.last_interaction_at,
+                      EXCLUDED.last_interaction_at
+                    ),
+                    COALESCE(
+                      EXCLUDED.last_interaction_at,
+                      relationship_substrate.relationship_edge.last_interaction_at
+                    )
+                  ),
+                  interaction_count = relationship_substrate.relationship_edge.interaction_count + 1,
+                  metadata = relationship_substrate.relationship_edge.metadata || jsonb_build_object(
+                    'email_message_count',
+                    COALESCE((relationship_substrate.relationship_edge.metadata->>'email_message_count')::int, 0) + 1,
+                    'source',
+                    'msgvault_correspondence'
+                  )
+                """,
+                (
+                    person_id,
+                    occurred_at,
+                    occurred_at,
+                    Jsonb({"source": "msgvault_correspondence", "email_message_count": 1}),
+                ),
+            )
+        conn.commit()
+    return person_id
+
+
+def materialize_msgvault_correspondence(database_url: str) -> dict[str, int | str]:
+    events = list_source_events(
+        database_url,
+        source_name="msgvault",
+        source_event_type="correspondence_message",
+    )
+    stats = {
+        "source": "msgvault",
+        "events_seen": len(events),
+        "materialized": 0,
+        "skipped_existing": 0,
+        "skipped_missing_email": 0,
+    }
+    for event in events:
+        if _clean_email(event["source_payload"].get("relationship_email")) is None:
+            stats["skipped_missing_email"] += 1
+            continue
+        person_id = materialize_msgvault_correspondence_event(database_url, event["id"])
+        if person_id is None:
+            stats["skipped_existing"] += 1
+        else:
+            stats["materialized"] += 1
     return stats

@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from datetime import UTC
+from uuid import uuid4
+
 import psycopg
 
 from relationship_substrate.cli import ingest_msgvault_sender_rows
+from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
-from relationship_substrate.materialize import materialize_msgvault_senders
+from relationship_substrate.dossiers import get_person_dossier
+from relationship_substrate.materialize import (
+    materialize_msgvault_correspondence,
+    materialize_msgvault_senders,
+)
+from relationship_substrate.repositories import upsert_source_event
 
 
 def _delete_sender_events(database_url, *emails: str) -> None:
@@ -182,3 +191,95 @@ def test_materialize_msgvault_senders_creates_relationship_edges(database_url):
                 """
             )
             assert cur.fetchone() == ("email_sender_profile", "true")
+
+
+def test_materialize_msgvault_correspondence_updates_edge_dates_and_counts(database_url):
+    run_migrations(database_url)
+    localpart = f"andrew-{uuid4().hex}"
+    email = f"{localpart}@example.com"
+    first_event = SourceEventIn(
+        source_name="msgvault",
+        source_event_type="correspondence_message",
+        source_event_key=f"msgvault:correspondence:{email}:1",
+        source_payload={
+            "id": 1,
+            "relationship_email": email,
+            "relationship_direction": "from_contact",
+            "from_email": email,
+            "from_name": "Andrew Example",
+            "sent_at": "2024-01-02T00:00:00Z",
+            "subject": "Inbound",
+            "snippet": "hello",
+        },
+        source_posture=SourcePosture.DIRECT_INTERACTION,
+        provenance_status="msgvault_message",
+        trust_role="direct email correspondence evidence",
+    )
+    second_event = SourceEventIn(
+        source_name="msgvault",
+        source_event_type="correspondence_message",
+        source_event_key=f"msgvault:correspondence:{email}:2",
+        source_payload={
+            "id": 2,
+            "relationship_email": email,
+            "relationship_direction": "to_contact",
+            "from_email": "braydon@example.com",
+            "from_name": "Braydon",
+            "sent_at": "2024-02-03T00:00:00Z",
+            "subject": "Outbound",
+            "snippet": "reply",
+        },
+        source_posture=SourcePosture.DIRECT_INTERACTION,
+        provenance_status="msgvault_message",
+        trust_role="direct email correspondence evidence",
+    )
+    upsert_source_event(database_url, first_event)
+    upsert_source_event(database_url, second_event)
+
+    stats = materialize_msgvault_correspondence(database_url)
+
+    assert stats["materialized"] == 2
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                  p.display_name,
+                  p.primary_email,
+                  e.interaction_count,
+                  e.first_interaction_at,
+                  e.last_interaction_at,
+                  e.metadata->>'email_message_count'
+                FROM relationship_substrate.person p
+                JOIN relationship_substrate.relationship_edge e ON e.person_id = p.id
+                WHERE p.primary_email = %s
+                """,
+                (email,),
+            )
+            row = cur.fetchone()
+            assert row[0] == "Andrew Example"
+            assert row[1] == email
+            assert row[2] == 2
+            assert row[3].astimezone(UTC).isoformat() == "2024-01-02T00:00:00+00:00"
+            assert row[4].astimezone(UTC).isoformat() == "2024-02-03T00:00:00+00:00"
+            assert row[5] == "2"
+            cur.execute(
+                """
+                SELECT interaction_type, subject, metadata->>'relationship_direction'
+                FROM relationship_substrate.interaction
+                WHERE metadata->>'relationship_email' = %s
+                ORDER BY occurred_at
+                """,
+                (email,),
+            )
+            assert cur.fetchall() == [
+                ("email_message", "Inbound", "from_contact"),
+                ("email_message", "Outbound", "to_contact"),
+            ]
+
+    dossier = get_person_dossier(database_url, email=email)
+
+    assert [interaction["subject"] for interaction in dossier["interactions"]] == [
+        "Outbound",
+        "Inbound",
+    ]

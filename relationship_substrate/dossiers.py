@@ -147,10 +147,11 @@ def get_person_dossier(database_url: str, *, email: str) -> dict[str, Any]:
                 SELECT id, source_event_id, interaction_type, occurred_at, subject, metadata
                 FROM relationship_substrate.interaction
                 WHERE metadata->>'sender_email' = %s
+                OR metadata->>'relationship_email' = %s
                 OR metadata->'attendee_emails' ? %s
                 ORDER BY occurred_at DESC NULLS LAST, id
                 """,
-                (normalized_email, normalized_email),
+                (normalized_email, normalized_email, normalized_email),
             )
             interaction_rows = cur.fetchall()
             source_event_ids = [row[1] for row in interaction_rows]
