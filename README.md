@@ -65,6 +65,15 @@ uv run relationship-substrate materialize-msgvault-senders
 uv run relationship-substrate export-operating-picture --from-db --limit 25
 ```
 
+Sender ingestion skips noisy internal/system senders before materialization. Defaults include Braydon's known self aliases, the `intempio.com` sender domain, and common automated local-parts/prefixes such as `events`, `onlinebanking`, `noreply`, `invoice`, and `statement`. Override with:
+
+```bash
+RELATIONSHIP_SUBSTRATE_SELF_EMAILS="a@example.com,b@example.com"
+RELATIONSHIP_SUBSTRATE_SKIPPED_SENDER_DOMAINS="intempio.com,example.org"
+RELATIONSHIP_SUBSTRATE_SKIPPED_SYSTEM_LOCALPARTS="events,onlinebanking"
+RELATIONSHIP_SUBSTRATE_SKIPPED_SYSTEM_PREFIXES="noreply,invoice,statement"
+```
+
 Export the first operating-picture shape:
 
 ```bash

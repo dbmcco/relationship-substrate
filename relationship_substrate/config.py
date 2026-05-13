@@ -20,6 +20,28 @@ DEFAULT_SKIPPED_SENDER_DOMAINS = (
     "intempio.com",
 )
 
+DEFAULT_SKIPPED_SYSTEM_LOCALPARTS = (
+    "events",
+    "onlinebanking",
+)
+
+DEFAULT_SKIPPED_SYSTEM_PREFIXES = (
+    "alerts",
+    "do-not-reply",
+    "donotreply",
+    "ealerts",
+    "invoice",
+    "invoices",
+    "no-reply",
+    "noreply",
+    "notification",
+    "notifications",
+    "receipt",
+    "receipts",
+    "statement",
+    "statements",
+)
+
 
 def _csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     value = os.environ.get(name)
@@ -53,4 +75,12 @@ class Settings:
     skipped_sender_domains: tuple[str, ...] = _csv_env(
         "RELATIONSHIP_SUBSTRATE_SKIPPED_SENDER_DOMAINS",
         DEFAULT_SKIPPED_SENDER_DOMAINS,
+    )
+    skipped_system_localparts: tuple[str, ...] = _csv_env(
+        "RELATIONSHIP_SUBSTRATE_SKIPPED_SYSTEM_LOCALPARTS",
+        DEFAULT_SKIPPED_SYSTEM_LOCALPARTS,
+    )
+    skipped_system_prefixes: tuple[str, ...] = _csv_env(
+        "RELATIONSHIP_SUBSTRATE_SKIPPED_SYSTEM_PREFIXES",
+        DEFAULT_SKIPPED_SYSTEM_PREFIXES,
     )

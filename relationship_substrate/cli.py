@@ -51,6 +51,8 @@ def _settings(args: argparse.Namespace) -> Settings:
             msgvault_config=settings.msgvault_config,
             self_email_aliases=settings.self_email_aliases,
             skipped_sender_domains=settings.skipped_sender_domains,
+            skipped_system_localparts=settings.skipped_system_localparts,
+            skipped_system_prefixes=settings.skipped_system_prefixes,
         )
     return settings
 
@@ -86,6 +88,8 @@ def ingest_msgvault_sender_rows(
     *,
     self_aliases: set[str],
     skipped_domains: set[str],
+    skipped_system_localparts: set[str] | None = None,
+    skipped_system_prefixes: set[str] | None = None,
 ) -> dict[str, int | str]:
     run_migrations(database_url)
     stats = {
@@ -94,8 +98,11 @@ def ingest_msgvault_sender_rows(
         "events_upserted": 0,
         "skipped_self": 0,
         "skipped_domain": 0,
+        "skipped_system": 0,
         "skipped_missing_email": 0,
     }
+    skipped_system_localparts = skipped_system_localparts or set()
+    skipped_system_prefixes = skipped_system_prefixes or set()
     for row in rows:
         raw_email = row.get("email")
         email = str(raw_email or "").strip().lower()
@@ -108,6 +115,13 @@ def ingest_msgvault_sender_rows(
         domain = email.rsplit("@", 1)[-1]
         if domain in skipped_domains:
             stats["skipped_domain"] += 1
+            continue
+        localpart = email.split("@", 1)[0]
+        normalized_localpart = localpart.replace(".", "-").replace("_", "-").lower()
+        if localpart in skipped_system_localparts or any(
+            normalized_localpart.startswith(prefix) for prefix in skipped_system_prefixes
+        ):
+            stats["skipped_system"] += 1
             continue
         event = SourceEventIn(
             source_name="msgvault",
@@ -143,6 +157,8 @@ def ingest_msgvault_senders(
         rows,
         self_aliases=self_aliases,
         skipped_domains=skipped_domains,
+        skipped_system_localparts=set(settings.skipped_system_localparts),
+        skipped_system_prefixes=set(settings.skipped_system_prefixes),
     )
 
 
@@ -177,6 +193,8 @@ def run_local_eval(
             msgvault.get("senders", []),
             self_aliases=set(settings.self_email_aliases),
             skipped_domains=set(settings.skipped_sender_domains),
+            skipped_system_localparts=set(settings.skipped_system_localparts),
+            skipped_system_prefixes=set(settings.skipped_system_prefixes),
         )
         msgvault_materialization = materialize_msgvault_senders(settings.database_url)
         msgvault["sender_ingestion"] = sender_ingestion
@@ -205,6 +223,7 @@ def run_local_eval(
             "Operating picture remains uninterpreted; no relationship-health scoring is performed.",
             "msgvault profiling uses supported read-only analytics commands.",
             "Known self email aliases are skipped before sender profiles become relationship edges.",
+            "Known automated/system sender patterns are skipped before sender profiles become relationship edges.",
         ],
     }
     output_dir.mkdir(parents=True, exist_ok=True)
