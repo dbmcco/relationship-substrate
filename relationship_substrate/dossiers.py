@@ -4,6 +4,8 @@ from typing import Any
 
 import psycopg
 
+from relationship_substrate.freshness import relationship_freshness
+
 
 def _person(row: tuple) -> dict[str, Any]:
     return {
@@ -23,14 +25,17 @@ def _relationship_edge(row: tuple | None) -> dict[str, Any]:
             "first_interaction_at": None,
             "last_interaction_at": None,
             "calendar_interaction_count": 0,
+            "freshness": relationship_freshness(None),
             "metadata": {},
         }
     metadata = row[3] or {}
+    last_interaction_at = row[2].isoformat() if row[2] else None
     return {
         "interaction_count": row[0],
         "first_interaction_at": row[1].isoformat() if row[1] else None,
-        "last_interaction_at": row[2].isoformat() if row[2] else None,
+        "last_interaction_at": last_interaction_at,
         "calendar_interaction_count": int(metadata.get("calendar_interaction_count") or 0),
+        "freshness": relationship_freshness(last_interaction_at),
         "metadata": metadata,
     }
 

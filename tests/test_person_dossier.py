@@ -72,6 +72,8 @@ def test_get_person_dossier_returns_evidence_interactions_and_candidates(databas
     assert dossier["person"]["display_name"] == "Dossier Person"
     assert dossier["relationship_edge"]["interaction_count"] == 1
     assert dossier["relationship_edge"]["calendar_interaction_count"] == 1
+    assert dossier["relationship_edge"]["freshness"]["state"] == "recent"
+    assert dossier["relationship_edge"]["freshness"]["basis"] == "last_materialized_interaction_at"
     assert dossier["contact_channels"] == [
         {
             "channel_type": "email",
