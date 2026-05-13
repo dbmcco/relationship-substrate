@@ -1,13 +1,54 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
 from psycopg.types.json import Jsonb
 
+from relationship_substrate.freshness import relationship_freshness
+
+
+DEFAULT_SKIPPED_ORGANIZATION_DOMAINS = {
+    "aol.com",
+    "gmail.com",
+    "hotmail.com",
+    "icloud.com",
+    "intempio.com",
+    "live.com",
+    "me.com",
+    "msn.com",
+    "outlook.com",
+    "proton.me",
+    "protonmail.com",
+    "yahoo.com",
+}
+
 
 def _clean_text(value: object) -> str:
     return str(value or "").strip()
+
+
+def _enrichment_reasons(
+    *,
+    has_enrichment: bool,
+    direct_people_count: int,
+    known_people_count: int,
+    total_interaction_count: int,
+    calendar_interaction_count: int,
+) -> list[str]:
+    reasons: list[str] = []
+    if not has_enrichment:
+        reasons.append("missing_organization_enrichment")
+    if total_interaction_count > 0:
+        reasons.append("direct_history_present")
+    if calendar_interaction_count > 0:
+        reasons.append("calendar_history_present")
+    if direct_people_count > 1:
+        reasons.append("multiple_direct_people")
+    if known_people_count > 1:
+        reasons.append("multiple_known_people")
+    return reasons
 
 
 def upsert_organization_enrichment(
@@ -167,6 +208,220 @@ def organization_enrichment_worklist(database_url: str, *, limit: int = 50) -> l
         }
         for row in rows
     ]
+
+
+def history_backed_organization_worklist(
+    database_url: str,
+    *,
+    limit: int = 50,
+    skipped_domains: set[str] | None = None,
+    as_of: datetime | None = None,
+) -> list[dict[str, Any]]:
+    skipped = sorted(DEFAULT_SKIPPED_ORGANIZATION_DOMAINS | set(skipped_domains or set()))
+    enrichments = organization_enrichment_by_name(database_url)
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH curated AS (
+                  SELECT
+                    lower(nullif(source_payload->>'email', '')) AS email,
+                    split_part(lower(nullif(source_payload->>'email', '')), '@', 2) AS domain,
+                    nullif(source_payload->>'company', '') AS company_name,
+                    nullif(source_payload->>'title', '') AS title
+                  FROM relationship_substrate.source_event
+                  WHERE source_name = 'next_up'
+                  AND source_event_type = 'curated_contact'
+                  AND nullif(source_payload->>'email', '') IS NOT NULL
+                  AND split_part(lower(source_payload->>'email'), '@', 2) <> ALL(%s)
+                ),
+                curated_company_counts AS (
+                  SELECT
+                    domain,
+                    company_name,
+                    count(*)::int AS company_count,
+                    row_number() OVER (
+                      PARTITION BY domain
+                      ORDER BY count(*) DESC, company_name
+                    ) AS company_rank
+                  FROM curated
+                  WHERE domain IS NOT NULL
+                  AND domain <> ''
+                  AND company_name IS NOT NULL
+                  GROUP BY domain, company_name
+                ),
+                domain_companies AS (
+                  SELECT domain, company_name
+                  FROM curated_company_counts
+                  WHERE company_rank = 1
+                ),
+                ranked_titles AS (
+                  SELECT
+                    domain,
+                    title,
+                    row_number() OVER (
+                      PARTITION BY domain
+                      ORDER BY title
+                    ) AS title_rank
+                  FROM (
+                    SELECT DISTINCT domain, title
+                    FROM curated
+                    WHERE title IS NOT NULL
+                  ) titles
+                ),
+                domain_title_samples AS (
+                  SELECT
+                    domain,
+                    array_agg(title ORDER BY title) FILTER (WHERE title_rank <= 5) AS sample_titles
+                  FROM ranked_titles
+                  GROUP BY domain
+                ),
+                curated_domain_counts AS (
+                  SELECT
+                    domain,
+                    count(DISTINCT email)::int AS known_people_count
+                  FROM curated
+                  WHERE domain IS NOT NULL
+                  AND domain <> ''
+                  GROUP BY domain
+                ),
+                direct_people AS (
+                  SELECT
+                    p.display_name,
+                    p.primary_email AS email,
+                    split_part(lower(p.primary_email), '@', 2) AS domain,
+                    COALESCE(e.interaction_count, 0)::int AS interaction_count,
+                    COALESCE((e.metadata->>'calendar_interaction_count')::int, 0)::int AS calendar_interaction_count,
+                    e.last_interaction_at
+                  FROM relationship_substrate.person p
+                  JOIN relationship_substrate.relationship_edge e
+                    ON e.person_id = p.id
+                  WHERE p.primary_email IS NOT NULL
+                  AND split_part(lower(p.primary_email), '@', 2) <> ALL(%s)
+                  AND COALESCE(e.interaction_count, 0) > 0
+                ),
+                direct_domain_counts AS (
+                  SELECT
+                    domain,
+                    count(DISTINCT email)::int AS direct_people_count,
+                    sum(interaction_count)::int AS total_interaction_count,
+                    sum(calendar_interaction_count)::int AS calendar_interaction_count,
+                    max(last_interaction_at) AS last_interaction_at
+                  FROM direct_people
+                  WHERE domain IS NOT NULL
+                  AND domain <> ''
+                  GROUP BY domain
+                ),
+                ranked_people AS (
+                  SELECT
+                    dp.*,
+                    c.title,
+                    row_number() OVER (
+                      PARTITION BY dp.domain
+                      ORDER BY dp.interaction_count DESC, dp.last_interaction_at DESC NULLS LAST, dp.display_name
+                    ) AS person_rank
+                  FROM direct_people dp
+                  LEFT JOIN curated c
+                    ON c.email = dp.email
+                ),
+                strongest_people AS (
+                  SELECT
+                    domain,
+                    jsonb_agg(
+                      jsonb_build_object(
+                        'name', display_name,
+                        'email', email,
+                        'title', title,
+                        'interaction_count', interaction_count,
+                        'calendar_interaction_count', calendar_interaction_count,
+                        'last_interaction_at', last_interaction_at
+                      )
+                      ORDER BY interaction_count DESC, last_interaction_at DESC NULLS LAST, display_name
+                    ) FILTER (WHERE person_rank <= 5) AS strongest_people
+                  FROM ranked_people
+                  GROUP BY domain
+                ),
+                domains AS (
+                  SELECT domain FROM curated_domain_counts
+                  UNION
+                  SELECT domain FROM direct_domain_counts
+                )
+                SELECT
+                  COALESCE(dc.company_name, d.domain) AS company_name,
+                  d.domain,
+                  COALESCE(cdc.known_people_count, 0) AS known_people_count,
+                  COALESCE(ddc.direct_people_count, 0) AS direct_people_count,
+                  COALESCE(ddc.total_interaction_count, 0) AS total_interaction_count,
+                  COALESCE(ddc.calendar_interaction_count, 0) AS calendar_interaction_count,
+                  GREATEST(
+                    COALESCE(ddc.total_interaction_count, 0) - COALESCE(ddc.calendar_interaction_count, 0),
+                    0
+                  ) AS email_interaction_count,
+                  ddc.last_interaction_at,
+                  COALESCE(dts.sample_titles, ARRAY[]::text[]) AS sample_titles,
+                  COALESCE(sp.strongest_people, '[]'::jsonb) AS strongest_people
+                FROM domains d
+                LEFT JOIN domain_companies dc
+                  ON dc.domain = d.domain
+                LEFT JOIN curated_domain_counts cdc
+                  ON cdc.domain = d.domain
+                LEFT JOIN domain_title_samples dts
+                  ON dts.domain = d.domain
+                LEFT JOIN direct_domain_counts ddc
+                  ON ddc.domain = d.domain
+                LEFT JOIN strongest_people sp
+                  ON sp.domain = d.domain
+                ORDER BY
+                  COALESCE(ddc.total_interaction_count, 0) DESC,
+                  COALESCE(ddc.direct_people_count, 0) DESC,
+                  COALESCE(cdc.known_people_count, 0) DESC,
+                  COALESCE(dc.company_name, d.domain)
+                LIMIT %s
+                """,
+                (skipped, skipped, limit),
+            )
+            rows = cur.fetchall()
+    worklist: list[dict[str, Any]] = []
+    for row in rows:
+        company_name = row[0]
+        enrichment = enrichments.get(company_name.lower())
+        has_enrichment = enrichment is not None
+        known_people_count = int(row[2] or 0)
+        direct_people_count = int(row[3] or 0)
+        total_interaction_count = int(row[4] or 0)
+        calendar_interaction_count = int(row[5] or 0)
+        email_interaction_count = int(row[6] or 0)
+        last_interaction_at = row[7].astimezone(UTC).isoformat() if row[7] else None
+        worklist.append(
+            {
+                "company_name": company_name,
+                "domain": row[1],
+                "known_people_count": known_people_count,
+                "direct_people_count": direct_people_count,
+                "email_interaction_count": email_interaction_count,
+                "calendar_interaction_count": calendar_interaction_count,
+                "total_interaction_count": total_interaction_count,
+                "last_interaction_at": last_interaction_at,
+                "freshness": relationship_freshness(last_interaction_at, as_of=as_of),
+                "has_enrichment": has_enrichment,
+                "organization_enrichment": enrichment,
+                "strongest_people": row[9] or [],
+                "sample_titles": list(dict.fromkeys(row[8] or [])),
+                "enrichment_reasons": _enrichment_reasons(
+                    has_enrichment=has_enrichment,
+                    direct_people_count=direct_people_count,
+                    known_people_count=known_people_count,
+                    total_interaction_count=total_interaction_count,
+                    calendar_interaction_count=calendar_interaction_count,
+                ),
+                "research_prompt": (
+                    "Find actual organization size, company type, consultant/team count, current "
+                    f"positioning, and source URLs for {company_name} ({row[1]}). Prioritize "
+                    "sources that support fields missing from organization_enrichment."
+                ),
+            }
+        )
+    return worklist
 
 
 def import_organization_enrichments(

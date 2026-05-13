@@ -661,3 +661,69 @@ def test_agent_cli_exports_and_imports_organization_enrichment_batch(
 
     assert report["imported"] == 1
     assert report["skipped"] == 0
+
+
+def test_agent_cli_exports_history_backed_organization_worklist(
+    database_url, tmp_path, monkeypatch, capsys
+):
+    run_migrations(database_url)
+    localpart = uuid4().hex
+    company = f"CLI History Co {localpart}"
+    domain = f"historyco-{localpart}.example"
+    email = f"history-{localpart}@{domain}"
+    workbook = tmp_path / "history_org_people.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Contacts"
+    ws.append(["First Name", "Last Name", "Title", "Company", "Email"])
+    ws.append(["History", "Person", "Medical Communications Consultant", company, email])
+    wb.save(workbook)
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "ingest-next-up",
+        "--path",
+        str(workbook),
+    )
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "materialize-exact-emails",
+    )
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.relationship_edge (
+                  person_id, interaction_count, metadata
+                )
+                SELECT id, 7, '{"source": "test"}'::jsonb
+                FROM relationship_substrate.person
+                WHERE primary_email = %s
+                ON CONFLICT (person_id)
+                DO UPDATE SET interaction_count = EXCLUDED.interaction_count
+                """,
+                (email,),
+            )
+        conn.commit()
+
+    report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "export-history-backed-organization-worklist",
+        "--limit",
+        "1000",
+    )
+
+    row = next(item for item in report["companies"] if item["company_name"] == company)
+    assert row["domain"] == domain
+    assert row["known_people_count"] == 1
+    assert row["direct_people_count"] == 1
+    assert row["total_interaction_count"] == 7
+    assert row["strongest_people"][0]["email"] == email

@@ -31,6 +31,7 @@ from relationship_substrate.materialize import (
     materialize_msgvault_senders,
 )
 from relationship_substrate.organizations import (
+    history_backed_organization_worklist,
     import_organization_enrichments,
     organization_enrichment_worklist,
     upsert_organization_enrichment,
@@ -114,6 +115,8 @@ def build_parser() -> argparse.ArgumentParser:
     org.add_argument("--provenance-status", default="external_research")
     org_worklist = subparsers.add_parser("export-organization-enrichment-worklist")
     org_worklist.add_argument("--limit", type=int, default=50)
+    org_history_worklist = subparsers.add_parser("export-history-backed-organization-worklist")
+    org_history_worklist.add_argument("--limit", type=int, default=50)
     org_import = subparsers.add_parser("import-organization-enrichments")
     org_import.add_argument("--path", required=True)
     export = subparsers.add_parser("export-operating-picture")
@@ -510,6 +513,15 @@ def main() -> int:
     if args.command == "export-organization-enrichment-worklist":
         run_migrations(settings.database_url)
         companies = organization_enrichment_worklist(settings.database_url, limit=args.limit)
+        _print_json({"count": len(companies), "companies": companies})
+        return 0
+    if args.command == "export-history-backed-organization-worklist":
+        run_migrations(settings.database_url)
+        companies = history_backed_organization_worklist(
+            settings.database_url,
+            limit=args.limit,
+            skipped_domains=set(settings.skipped_sender_domains),
+        )
         _print_json({"count": len(companies), "companies": companies})
         return 0
     if args.command == "import-organization-enrichments":
