@@ -30,7 +30,11 @@ from relationship_substrate.materialize import (
     materialize_exact_emails,
     materialize_msgvault_senders,
 )
-from relationship_substrate.organizations import upsert_organization_enrichment
+from relationship_substrate.organizations import (
+    import_organization_enrichments,
+    organization_enrichment_worklist,
+    upsert_organization_enrichment,
+)
 from relationship_substrate.repositories import (
     identity_candidate_counts,
     operating_picture_rows,
@@ -106,6 +110,10 @@ def build_parser() -> argparse.ArgumentParser:
     org.add_argument("--source-name", required=True)
     org.add_argument("--source-url", default=None)
     org.add_argument("--provenance-status", default="external_research")
+    org_worklist = subparsers.add_parser("export-organization-enrichment-worklist")
+    org_worklist.add_argument("--limit", type=int, default=50)
+    org_import = subparsers.add_parser("import-organization-enrichments")
+    org_import.add_argument("--path", required=True)
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -496,6 +504,18 @@ def main() -> int:
                 provenance_status=args.provenance_status,
             )
         )
+        return 0
+    if args.command == "export-organization-enrichment-worklist":
+        run_migrations(settings.database_url)
+        companies = organization_enrichment_worklist(settings.database_url, limit=args.limit)
+        _print_json({"count": len(companies), "companies": companies})
+        return 0
+    if args.command == "import-organization-enrichments":
+        run_migrations(settings.database_url)
+        records = json.loads(Path(args.path).read_text(encoding="utf-8"))
+        if not isinstance(records, list):
+            records = [records]
+        _print_json(import_organization_enrichments(settings.database_url, records))
         return 0
     if args.command == "search-people":
         semantic_query_embedding = None

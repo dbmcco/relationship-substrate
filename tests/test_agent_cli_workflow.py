@@ -567,3 +567,71 @@ def test_agent_cli_upserts_organization_enrichment(
     assert enrichment["enrichment"]["company_type"] == "public_pharmaceutical_company"
     assert result["known_people_at_company_count"] == 10
     assert result["organization_enrichment"]["employee_count_label"] == "enterprise"
+
+
+def test_agent_cli_exports_and_imports_organization_enrichment_batch(
+    database_url, tmp_path, monkeypatch, capsys
+):
+    run_migrations(database_url)
+    localpart = uuid4().hex
+    company = f"Batch Medcom Co {localpart}"
+    workbook = tmp_path / "batch_org_people.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Contacts"
+    ws.append(["First Name", "Last Name", "Title", "Company", "Email"])
+    ws.append(["Batch", "Person", "Medical Communications Consultant", company, f"batch-{localpart}@example.com"])
+    wb.save(workbook)
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "ingest-next-up",
+        "--path",
+        str(workbook),
+    )
+
+    worklist = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "export-organization-enrichment-worklist",
+        "--limit",
+        "1000",
+    )
+    row = next(item for item in worklist["companies"] if item["company_name"] == company)
+    assert row["has_enrichment"] is False
+    assert row["sample_titles"] == ["Medical Communications Consultant"]
+
+    import_path = tmp_path / "org-enrichment.json"
+    import_path.write_text(
+        json.dumps(
+            [
+                {
+                    "company_name": company,
+                    "company_type": "medical_communications_consultancy",
+                    "employee_count_min": 10,
+                    "employee_count_max": 20,
+                    "employee_count_label": "small_team",
+                    "source_name": "manual_research",
+                    "source_url": "https://example.com/company",
+                    "provenance_status": "external_research",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "import-organization-enrichments",
+        "--path",
+        str(import_path),
+    )
+
+    assert report["imported"] == 1
+    assert report["skipped"] == 0

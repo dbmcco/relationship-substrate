@@ -94,3 +94,109 @@ def organization_enrichment_by_name(database_url: str) -> dict[str, dict[str, An
             )
             rows = cur.fetchall()
     return {row[0]: row[1] for row in rows if row[1] is not None}
+
+
+def organization_enrichment_worklist(database_url: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    enrichments = organization_enrichment_by_name(database_url)
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH curated AS (
+                  SELECT
+                    nullif(source_payload->>'company', '') AS company_name,
+                    nullif(source_payload->>'title', '') AS title
+                  FROM relationship_substrate.source_event
+                  WHERE source_name = 'next_up'
+                  AND source_event_type = 'curated_contact'
+                  AND nullif(source_payload->>'company', '') IS NOT NULL
+                ),
+                ranked_titles AS (
+                  SELECT
+                    company_name,
+                    title,
+                    row_number() OVER (
+                      PARTITION BY company_name
+                      ORDER BY title
+                    ) AS title_rank
+                  FROM (
+                    SELECT DISTINCT company_name, title
+                    FROM curated
+                    WHERE title IS NOT NULL
+                  ) titles
+                ),
+                company_counts AS (
+                  SELECT company_name, count(*)::int AS known_people_at_company_count
+                  FROM curated
+                  GROUP BY company_name
+                ),
+                title_samples AS (
+                  SELECT
+                    company_name,
+                    array_agg(title ORDER BY title) FILTER (WHERE title_rank <= 5) AS sample_titles
+                  FROM ranked_titles
+                  GROUP BY company_name
+                )
+                SELECT
+                  cc.company_name,
+                  cc.known_people_at_company_count,
+                  COALESCE(ts.sample_titles, ARRAY[]::text[]) AS sample_titles
+                FROM company_counts cc
+                LEFT JOIN title_samples ts
+                  ON ts.company_name = cc.company_name
+                ORDER BY
+                  CASE WHEN lower(cc.company_name) = ANY(%s) THEN 1 ELSE 0 END,
+                  cc.known_people_at_company_count DESC,
+                  cc.company_name
+                LIMIT %s
+                """,
+                (list(enrichments.keys()), limit),
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            "company_name": row[0],
+            "known_people_at_company_count": row[1],
+            "has_enrichment": row[0].lower() in enrichments,
+            "organization_enrichment": enrichments.get(row[0].lower()),
+            "sample_titles": list(dict.fromkeys(row[2] or [])),
+            "research_prompt": (
+                "Find actual organization size, company type, whether this is a medcoms/medical "
+                f"communications consultancy, and source URLs for {row[0]}."
+            ),
+        }
+        for row in rows
+    ]
+
+
+def import_organization_enrichments(
+    database_url: str,
+    records: list[dict[str, Any]],
+) -> dict[str, int | str]:
+    report: dict[str, int | str] = {
+        "source": "organization_enrichment_import",
+        "seen": len(records),
+        "imported": 0,
+        "skipped": 0,
+    }
+    for record in records:
+        company_name = _clean_text(record.get("company_name") or record.get("company"))
+        source_name = _clean_text(record.get("source_name"))
+        provenance_status = _clean_text(record.get("provenance_status")) or "external_research"
+        if not company_name or not source_name:
+            report["skipped"] += 1
+            continue
+        upsert_organization_enrichment(
+            database_url,
+            company_name=company_name,
+            company_type=record.get("company_type"),
+            employee_count_min=record.get("employee_count_min"),
+            employee_count_max=record.get("employee_count_max"),
+            employee_count_label=record.get("employee_count_label"),
+            consultant_count_estimate=record.get("consultant_count_estimate"),
+            source_name=source_name,
+            source_url=record.get("source_url"),
+            provenance_status=provenance_status,
+        )
+        report["imported"] += 1
+    return report
