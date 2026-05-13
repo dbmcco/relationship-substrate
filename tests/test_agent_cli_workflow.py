@@ -328,3 +328,58 @@ def test_agent_cli_ingests_and_materializes_calendar_json(database_url, tmp_path
         row for row in picture["relationships"] if row["metadata"]["primary_email"] == f"{localpart}@example.com"
     )
     assert relationship["metadata"]["calendar_interaction_count"] == 1
+
+
+def test_agent_cli_shows_person_dossier(database_url, tmp_path, monkeypatch, capsys):
+    run_migrations(database_url)
+    calendar_path = tmp_path / "dossier-calendar.json"
+    localpart = f"clidossier{uuid4().hex}"
+    email = f"{localpart}@example.com"
+    calendar_path.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "id": f"event-{localpart}",
+                        "summary": "CLI dossier meeting",
+                        "start": {"dateTime": "2026-05-06T11:00:00-04:00"},
+                        "attendees": [
+                            {"email": "braydon@example.com", "self": True},
+                            {"email": email, "displayName": "CLI Dossier"},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "ingest-calendar",
+        "--path",
+        str(calendar_path),
+    )
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "materialize-calendar-events",
+    )
+
+    dossier = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "show-person",
+        "--email",
+        email,
+    )
+
+    assert dossier["person"]["primary_email"] == email
+    assert dossier["relationship_edge"]["calendar_interaction_count"] == 1
+    assert dossier["interactions"][0]["subject"] == "CLI dossier meeting"

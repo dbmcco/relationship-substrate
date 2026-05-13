@@ -70,6 +70,7 @@ uv run relationship-substrate generate-identity-candidates
 uv run relationship-substrate list-identity-candidates --status candidate --limit 25
 uv run relationship-substrate show-identity-candidate --id "<candidate-id>"
 uv run relationship-substrate resolve-identity-candidate --id "<candidate-id>" --status rejected --note "review note"
+uv run relationship-substrate show-person --email "person@example.com"
 uv run relationship-substrate export-operating-picture --from-db --limit 25
 ```
 
@@ -93,3 +94,5 @@ Calendar ingestion accepts JSON exports with `items`, `events`, `data`, a bare e
 Current eval interpretation: the CLI now proves that Next Up curated exports can be ingested and materialized with preserved provenance, msgvault sender/domain profiles can be read through the supported analytics commands, and calendar exports can be materialized into attendee interaction evidence. Msgvault sender profiles can also be materialized into aggregate `interaction` and `relationship_edge` rows, skipping known Braydon/self aliases by default. The operating picture remains conservative: direct email/calendar counts are interaction evidence, not relationship-health interpretation; rows from Next Up without matching interaction evidence remain `curated_export + unknown_upstream` identity seeds.
 
 Identity candidates are unresolved review suggestions, not merges. The current candidate pass detects repeated non-generic email localparts across domains, suppresses role accounts such as `events`, `info`, and `hello`, and surfaces open candidate counts in the DB-backed operating picture metadata. Candidate review records a decision and note in evidence metadata; accepted/rejected/superseded decisions prevent the same pair from being regenerated.
+
+Person dossiers are factual inspection views for agents. `show-person --email` returns the canonical person, contact channels, relationship edge counters, matching interactions, source events, evidence refs, and identity candidates without adding semantic relationship-health interpretation.

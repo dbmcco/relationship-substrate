@@ -10,6 +10,7 @@ from relationship_substrate.adapters.msgvault import MsgvaultAdapter
 from relationship_substrate.config import Settings
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
+from relationship_substrate.dossiers import get_person_dossier
 from relationship_substrate.identity import (
     generate_identity_candidates,
     get_identity_candidate,
@@ -68,6 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     resolve_candidate.add_argument("--note", required=True)
+    show_person = subparsers.add_parser("show-person")
+    show_person.add_argument("--email", required=True)
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -403,6 +406,9 @@ def main() -> int:
                 note=args.note,
             )
         )
+        return 0
+    if args.command == "show-person":
+        _print_json(get_person_dossier(settings.database_url, email=args.email))
         return 0
     if args.command == "export-operating-picture":
         if args.from_db:
