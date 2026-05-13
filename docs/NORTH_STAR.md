@@ -43,12 +43,12 @@ The first North Star workflow is goal-conditioned network search:
 
 1. Ask for people from Braydon's network matching a goal, such as "consultant-like people at companies where I know 10-15 people."
 2. Use embeddings for semantic matching against the goal, plus explicit structured constraints such as known-company count.
-3. Return ranked candidates with role, company, known people at that company, semantic similarity, interaction count, freshness, and source evidence.
+3. Return ranked candidates with role, company, known people at that company in Braydon's substrate, separate organization size/type enrichment, semantic similarity, interaction count, freshness, and source evidence.
 4. Evaluate which candidates have the strongest relationship evidence before drafting anything.
 5. Research recent context about the selected person or organization with fresh external sources.
 6. Draft an email that cites the relationship context and current entry point without pretending enrichment is direct relationship evidence.
 
-The current executable slice is `search-people`: it searches Next Up curated contact evidence, counts known people per company inside the substrate, can rank by pgvector semantic similarity when local Ollama embeddings are populated, can rank by materialized relationship strength, and returns provenance. It does not yet research recent news or write outreach.
+The current executable slice is `search-people`: it searches Next Up curated contact evidence, counts known people per company inside the substrate as `known_people_at_company_count`, can include separately sourced `organization_enrichment`, can rank by pgvector semantic similarity when local Ollama embeddings are populated, can rank by materialized relationship strength, and returns provenance. It does not yet research recent news or write outreach.
 
 ## Non-Negotiable Principles
 

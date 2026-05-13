@@ -30,6 +30,7 @@ from relationship_substrate.materialize import (
     materialize_exact_emails,
     materialize_msgvault_senders,
 )
+from relationship_substrate.organizations import upsert_organization_enrichment
 from relationship_substrate.repositories import (
     identity_candidate_counts,
     operating_picture_rows,
@@ -82,8 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     show_person.add_argument("--email", required=True)
     search = subparsers.add_parser("search-people")
     search.add_argument("--role-keywords", default=",".join(DEFAULT_ROLE_KEYWORDS))
-    search.add_argument("--company-size-min", type=int, default=None)
-    search.add_argument("--company-size-max", type=int, default=None)
+    search.add_argument("--known-people-at-company-min", "--company-size-min", type=int, default=None)
+    search.add_argument("--known-people-at-company-max", "--company-size-max", type=int, default=None)
     search.add_argument("--semantic-query", default=None)
     search.add_argument("--semantic-provider", choices=["ollama", "openai", "hash"], default="ollama")
     search.add_argument("--embedding-model", default=None)
@@ -93,6 +94,16 @@ def build_parser() -> argparse.ArgumentParser:
     embed.add_argument("--provider", choices=["ollama", "openai", "hash"], default="ollama")
     embed.add_argument("--model", default=None)
     embed.add_argument("--limit", type=int, default=None)
+    org = subparsers.add_parser("upsert-organization-enrichment")
+    org.add_argument("--company", required=True)
+    org.add_argument("--company-type", default=None)
+    org.add_argument("--employee-count-min", type=int, default=None)
+    org.add_argument("--employee-count-max", type=int, default=None)
+    org.add_argument("--employee-count-label", default=None)
+    org.add_argument("--consultant-count-estimate", type=int, default=None)
+    org.add_argument("--source-name", required=True)
+    org.add_argument("--source-url", default=None)
+    org.add_argument("--provenance-status", default="external_research")
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -467,6 +478,23 @@ def main() -> int:
             )
         )
         return 0
+    if args.command == "upsert-organization-enrichment":
+        run_migrations(settings.database_url)
+        _print_json(
+            upsert_organization_enrichment(
+                settings.database_url,
+                company_name=args.company,
+                company_type=args.company_type,
+                employee_count_min=args.employee_count_min,
+                employee_count_max=args.employee_count_max,
+                employee_count_label=args.employee_count_label,
+                consultant_count_estimate=args.consultant_count_estimate,
+                source_name=args.source_name,
+                source_url=args.source_url,
+                provenance_status=args.provenance_status,
+            )
+        )
+        return 0
     if args.command == "search-people":
         semantic_query_embedding = None
         if args.semantic_query:
@@ -477,8 +505,8 @@ def main() -> int:
         results = search_people(
             settings.database_url,
             role_keywords=_comma_separated(args.role_keywords),
-            company_size_min=args.company_size_min,
-            company_size_max=args.company_size_max,
+            known_people_at_company_min=args.known_people_at_company_min,
+            known_people_at_company_max=args.known_people_at_company_max,
             semantic_query_embedding=semantic_query_embedding,
             sort=args.sort,
             limit=args.limit,
@@ -487,8 +515,8 @@ def main() -> int:
             {
                 "query": {
                     "role_keywords": _comma_separated(args.role_keywords),
-                    "company_size_min": args.company_size_min,
-                    "company_size_max": args.company_size_max,
+                    "known_people_at_company_min": args.known_people_at_company_min,
+                    "known_people_at_company_max": args.known_people_at_company_max,
                     "semantic_query": args.semantic_query,
                     "semantic_provider": args.semantic_provider if args.semantic_query else None,
                     "embedding_model": _embedding_model(args.semantic_provider, args.embedding_model)

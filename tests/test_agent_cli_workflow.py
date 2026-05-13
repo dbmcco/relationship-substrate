@@ -433,9 +433,9 @@ def test_agent_cli_searches_people_by_role_and_company_size(
         "search-people",
         "--role-keywords",
         "consultant",
-        "--company-size-min",
+        "--known-people-at-company-min",
         "10",
-        "--company-size-max",
+        "--known-people-at-company-max",
         "15",
         "--limit",
         "1000",
@@ -444,7 +444,7 @@ def test_agent_cli_searches_people_by_role_and_company_size(
     result = next(
         row for row in report["results"] if row["email"] == f"cli-search-0-{localpart}@example.com"
     )
-    assert result["company_people_count"] == 10
+    assert result["known_people_at_company_count"] == 10
 
 
 def test_agent_cli_embeds_curated_contacts_with_hash_provider(
@@ -485,3 +485,85 @@ def test_agent_cli_embeds_curated_contacts_with_hash_provider(
     assert report["source"] == "next_up"
     assert report["embedded"] >= 1
     assert report["provider"] == "hash"
+
+
+def test_agent_cli_upserts_organization_enrichment(
+    database_url, tmp_path, monkeypatch, capsys
+):
+    run_migrations(database_url)
+    localpart = uuid4().hex
+    company = f"CLI Enterprise Pharma {localpart}"
+    workbook = tmp_path / "org_enrichment_people.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Contacts"
+    ws.append(["First Name", "Last Name", "Title", "Company", "Email"])
+    for index in range(10):
+        title = "Medical Communications Lead" if index == 0 else "Peer"
+        ws.append(
+            [
+                f"Org{index}",
+                "Person",
+                title,
+                company,
+                f"cli-org-{index}-{localpart}@example.com",
+            ]
+        )
+    wb.save(workbook)
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "ingest-next-up",
+        "--path",
+        str(workbook),
+    )
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "materialize-exact-emails",
+    )
+    enrichment = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "upsert-organization-enrichment",
+        "--company",
+        company,
+        "--company-type",
+        "public_pharmaceutical_company",
+        "--employee-count-min",
+        "50000",
+        "--employee-count-label",
+        "enterprise",
+        "--source-name",
+        "manual_research",
+        "--source-url",
+        "https://example.com/company-profile",
+    )
+    report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "search-people",
+        "--role-keywords",
+        "medical communications",
+        "--known-people-at-company-min",
+        "10",
+        "--known-people-at-company-max",
+        "15",
+        "--limit",
+        "1000",
+    )
+
+    result = next(
+        row for row in report["results"] if row["email"] == f"cli-org-0-{localpart}@example.com"
+    )
+    assert enrichment["enrichment"]["company_type"] == "public_pharmaceutical_company"
+    assert result["known_people_at_company_count"] == 10
+    assert result["organization_enrichment"]["employee_count_label"] == "enterprise"

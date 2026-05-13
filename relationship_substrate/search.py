@@ -7,6 +7,7 @@ from typing import Any
 import psycopg
 
 from relationship_substrate.freshness import relationship_freshness
+from relationship_substrate.organizations import organization_enrichment_by_name
 
 
 DEFAULT_ROLE_KEYWORDS = [
@@ -143,12 +144,21 @@ def search_people(
     role_keywords: list[str] | None = None,
     company_size_min: int | None = None,
     company_size_max: int | None = None,
+    known_people_at_company_min: int | None = None,
+    known_people_at_company_max: int | None = None,
     semantic_query_embedding: list[float] | None = None,
     sort: str | None = None,
     limit: int = 25,
     as_of: datetime | None = None,
 ) -> list[dict[str, Any]]:
+    known_people_at_company_min = (
+        company_size_min if known_people_at_company_min is None else known_people_at_company_min
+    )
+    known_people_at_company_max = (
+        company_size_max if known_people_at_company_max is None else known_people_at_company_max
+    )
     rows = _curated_contact_rows(database_url, semantic_query_embedding=semantic_query_embedding)
+    organization_enrichments = organization_enrichment_by_name(database_url)
     company_counts = Counter(
         _clean_text(row["payload"].get("company")) for row in rows if _clean_text(row["payload"].get("company"))
     )
@@ -166,10 +176,16 @@ def search_people(
         if not email or email in seen_emails:
             continue
         company = _clean_text(payload.get("company"))
-        company_people_count = company_counts.get(company, 0)
-        if company_size_min is not None and company_people_count < company_size_min:
+        known_people_at_company_count = company_counts.get(company, 0)
+        if (
+            known_people_at_company_min is not None
+            and known_people_at_company_count < known_people_at_company_min
+        ):
             continue
-        if company_size_max is not None and company_people_count > company_size_max:
+        if (
+            known_people_at_company_max is not None
+            and known_people_at_company_count > known_people_at_company_max
+        ):
             continue
         title = _clean_text(payload.get("title"))
         keyword_matches = _keyword_matches(haystack=title, keywords=keywords)
@@ -181,8 +197,8 @@ def search_people(
         semantic_similarity = 1.0 - float(semantic_distance) if semantic_distance is not None else None
         if semantic_query_embedding is not None and semantic_similarity is not None:
             match_reasons.append("semantic_query")
-        if company_size_min is not None or company_size_max is not None:
-            match_reasons.append(f"company_size:{company_people_count}")
+        if known_people_at_company_min is not None or known_people_at_company_max is not None:
+            match_reasons.append(f"known_people_at_company:{known_people_at_company_count}")
 
         results.append(
             {
@@ -191,7 +207,8 @@ def search_people(
                 "name": row["person_display_name"] or _display_name(payload),
                 "title": title,
                 "company": company,
-                "company_people_count": company_people_count,
+                "known_people_at_company_count": known_people_at_company_count,
+                "organization_enrichment": organization_enrichments.get(company.lower()),
                 "relationship": {
                     "interaction_count": row["interaction_count"],
                     "last_interaction_at": row["last_interaction_at"],

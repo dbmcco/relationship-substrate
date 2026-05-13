@@ -10,6 +10,7 @@ from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
 from relationship_substrate.embeddings import embed_curated_contacts
 from relationship_substrate.materialize import materialize_exact_emails
+from relationship_substrate.organizations import upsert_organization_enrichment
 from relationship_substrate.repositories import upsert_source_event
 from relationship_substrate.search import search_people
 
@@ -165,7 +166,8 @@ def test_search_people_filters_consultant_like_roles_by_company_size_and_ranks_b
     assert outsider_email not in {row["email"] for row in results}
     assert current_results[0]["relationship"]["interaction_count"] == 12
     assert current_results[0]["relationship"]["freshness"]["state"] == "recent"
-    assert current_results[0]["company_people_count"] == 10
+    assert current_results[0]["known_people_at_company_count"] == 10
+    assert "company_people_count" not in current_results[0]
     assert "role_keyword:consultant" in current_results[0]["match_reasons"]
     assert current_results[0]["evidence"]["source_name"] == "next_up"
 
@@ -252,3 +254,61 @@ def test_search_people_can_use_semantic_similarity_without_role_keywords(databas
     assert [row["email"] for row in current_results] == [supply_email, unrelated_email]
     assert current_results[0]["semantic"]["similarity"] > current_results[1]["semantic"]["similarity"]
     assert "semantic_query" in current_results[0]["match_reasons"]
+
+
+def test_search_people_separates_known_people_count_from_organization_enrichment(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    company = f"Enterprise Pharma {run_id}"
+    email = f"enterprise-{run_id}@example.com"
+
+    _curated_contact(
+        database_url,
+        email=email,
+        title="Medical Communications Lead",
+        company=company,
+        full_name="Enterprise Contact",
+    )
+    for index in range(9):
+        _curated_contact(
+            database_url,
+            email=f"enterprise-peer-{index}-{run_id}@example.com",
+            title="Peer",
+            company=company,
+            full_name=f"Enterprise Peer {index}",
+        )
+    materialize_exact_emails(database_url)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=company,
+        company_type="public_pharmaceutical_company",
+        employee_count_min=50000,
+        employee_count_label="enterprise",
+        source_name="manual_research",
+        source_url="https://example.com/company-profile",
+        provenance_status="external_research",
+    )
+
+    result = next(
+        row
+        for row in search_people(
+            database_url,
+            role_keywords=["medical communications"],
+            known_people_at_company_min=10,
+            known_people_at_company_max=15,
+            limit=1000,
+        )
+        if row["email"] == email
+    )
+
+    assert result["known_people_at_company_count"] == 10
+    assert result["organization_enrichment"] == {
+        "company_type": "public_pharmaceutical_company",
+        "employee_count_label": "enterprise",
+        "employee_count_min": 50000,
+        "employee_count_max": None,
+        "consultant_count_estimate": None,
+        "source_name": "manual_research",
+        "source_url": "https://example.com/company-profile",
+        "provenance_status": "external_research",
+    }
