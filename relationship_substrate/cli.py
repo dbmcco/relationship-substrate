@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from relationship_substrate.adapters.calendar import iter_calendar_json_events
 from relationship_substrate.adapters.next_up import iter_next_up_events
 from relationship_substrate.adapters.msgvault import MsgvaultAdapter
 from relationship_substrate.config import Settings
@@ -15,11 +16,16 @@ from relationship_substrate.identity import (
     list_identity_candidates,
     resolve_identity_candidate,
 )
-from relationship_substrate.materialize import materialize_exact_emails, materialize_msgvault_senders
+from relationship_substrate.materialize import (
+    materialize_calendar_events,
+    materialize_exact_emails,
+    materialize_msgvault_senders,
+)
 from relationship_substrate.repositories import (
     identity_candidate_counts,
     operating_picture_rows,
     substrate_counts,
+    upsert_evidence_ref,
     upsert_source_event,
 )
 
@@ -38,9 +44,12 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_msgvault.add_argument("--include-self", action="store_true")
     ingest = subparsers.add_parser("ingest-next-up")
     ingest.add_argument("--path", required=True)
+    ingest_calendar = subparsers.add_parser("ingest-calendar")
+    ingest_calendar.add_argument("--path", required=True)
     materialize = subparsers.add_parser("materialize-exact-emails")
     materialize.add_argument("--source", default="next_up")
     subparsers.add_parser("materialize-msgvault-senders")
+    subparsers.add_parser("materialize-calendar-events")
     subparsers.add_parser("generate-identity-candidates")
     list_candidates = subparsers.add_parser("list-identity-candidates")
     list_candidates.add_argument(
@@ -64,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--limit", type=int, default=25)
     eval_local = subparsers.add_parser("eval-local")
     eval_local.add_argument("--next-up-path", required=True)
+    eval_local.add_argument("--calendar-path", default=None)
     eval_local.add_argument("--output-dir", default="output/eval")
     eval_local.add_argument("--limit", type=int, default=25)
     eval_local.add_argument("--skip-msgvault", action="store_true")
@@ -99,6 +109,24 @@ def ingest_next_up(database_url: str, path: Path) -> dict[str, int | str]:
         upsert_source_event(database_url, event)
         events_upserted += 1
     return {"source": "next_up", "events_seen": events_seen, "events_upserted": events_upserted}
+
+
+def ingest_calendar(database_url: str, path: Path) -> dict[str, int | str]:
+    run_migrations(database_url)
+    events_seen = 0
+    events_upserted = 0
+    for event in iter_calendar_json_events(path):
+        events_seen += 1
+        source_event_id = upsert_source_event(database_url, event)
+        upsert_evidence_ref(
+            database_url,
+            source_event_id=source_event_id,
+            ref_type="calendar_event",
+            ref_value=event.source_event_key,
+            metadata={"path": str(path)},
+        )
+        events_upserted += 1
+    return {"source": "calendar", "events_seen": events_seen, "events_upserted": events_upserted}
 
 
 def profile_msgvault(settings: Settings, *, limit: int, kind: str) -> dict[str, object]:
@@ -208,6 +236,7 @@ def run_local_eval(
     settings: Settings,
     *,
     next_up_path: Path,
+    calendar_path: Path | None,
     output_dir: Path,
     limit: int,
     skip_msgvault: bool,
@@ -238,6 +267,27 @@ def run_local_eval(
         )
         msgvault_materialization = materialize_msgvault_senders(settings.database_url)
         msgvault["sender_ingestion"] = sender_ingestion
+    calendar = {
+        "skipped": calendar_path is None,
+        "ingestion": {"source": "calendar", "events_seen": 0, "events_upserted": 0},
+        "materialization": {
+            "source": "calendar",
+            "events_seen": 0,
+            "materialized_events": 0,
+            "attendees_materialized": 0,
+            "skipped_self": 0,
+            "skipped_domain": 0,
+            "skipped_missing_email": 0,
+            "skipped_existing": 0,
+        },
+    }
+    if calendar_path is not None:
+        calendar["ingestion"] = ingest_calendar(settings.database_url, calendar_path)
+        calendar["materialization"] = materialize_calendar_events(
+            settings.database_url,
+            self_aliases=set(settings.self_email_aliases),
+            skipped_domains=set(settings.skipped_sender_domains),
+        )
     identity_candidates = generate_identity_candidate_report(settings.database_url)
     picture = operating_picture_from_db(settings.database_url, limit=limit)
     counts = substrate_counts(settings.database_url)
@@ -258,6 +308,7 @@ def run_local_eval(
             "sender_ingestion": msgvault.get("sender_ingestion", {}) if msgvault else {},
         },
         "identity_candidates": identity_candidates,
+        "calendar": calendar,
         "counts": counts,
         "checks": [
             "Next Up events retain curated_export + unknown_upstream provenance.",
@@ -267,6 +318,7 @@ def run_local_eval(
             "Known self email aliases are skipped before sender profiles become relationship edges.",
             "Known automated/system sender patterns are skipped before sender profiles become relationship edges.",
             "Identity candidates are generated as unresolved review suggestions; no automatic person merges are performed.",
+            "Calendar events materialize attendee evidence and update relationship edges without relationship-health interpretation.",
         ],
     }
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -305,6 +357,9 @@ def main() -> int:
     if args.command == "ingest-next-up":
         _print_json(ingest_next_up(settings.database_url, Path(args.path)))
         return 0
+    if args.command == "ingest-calendar":
+        _print_json(ingest_calendar(settings.database_url, Path(args.path)))
+        return 0
     if args.command == "materialize-exact-emails":
         run_migrations(settings.database_url)
         _print_json(
@@ -318,6 +373,16 @@ def main() -> int:
     if args.command == "materialize-msgvault-senders":
         run_migrations(settings.database_url)
         _print_json(materialize_msgvault_senders(settings.database_url))
+        return 0
+    if args.command == "materialize-calendar-events":
+        run_migrations(settings.database_url)
+        _print_json(
+            materialize_calendar_events(
+                settings.database_url,
+                self_aliases=set(settings.self_email_aliases),
+                skipped_domains=set(settings.skipped_sender_domains),
+            )
+        )
         return 0
     if args.command == "generate-identity-candidates":
         _print_json(generate_identity_candidate_report(settings.database_url))
@@ -352,6 +417,7 @@ def main() -> int:
             run_local_eval(
                 settings,
                 next_up_path=Path(args.next_up_path),
+                calendar_path=Path(args.calendar_path) if args.calendar_path else None,
                 output_dir=Path(args.output_dir),
                 limit=args.limit,
                 skip_msgvault=args.skip_msgvault,

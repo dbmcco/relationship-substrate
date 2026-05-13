@@ -49,6 +49,38 @@ def upsert_source_event(database_url: str, event: SourceEventIn) -> UUID:
     return row[0]
 
 
+def upsert_evidence_ref(
+    database_url: str,
+    *,
+    source_event_id: UUID,
+    ref_type: str,
+    ref_value: str,
+    metadata: dict,
+) -> UUID:
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.evidence_ref (
+                  source_event_id, ref_type, ref_value, metadata
+                )
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (ref_type, ref_value)
+                DO UPDATE SET
+                  source_event_id = EXCLUDED.source_event_id,
+                  metadata = EXCLUDED.metadata
+                RETURNING id
+                """,
+                (source_event_id, ref_type, ref_value, Jsonb(metadata)),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    if row is None:
+        msg = "evidence_ref upsert returned no id"
+        raise RuntimeError(msg)
+    return row[0]
+
+
 def get_source_event(database_url: str, source_event_id: UUID) -> dict:
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
@@ -141,7 +173,8 @@ def operating_picture_rows(database_url: str, *, limit: int = 25) -> list[dict]:
                   p.source_posture,
                   p.provenance_status,
                   p.metadata,
-                  COALESCE(ict.candidate_count, 0) AS unresolved_identity_candidates
+                  COALESCE(ict.candidate_count, 0) AS unresolved_identity_candidates,
+                  COALESCE((e.metadata->>'calendar_interaction_count')::int, 0) AS calendar_interaction_count
                 FROM relationship_substrate.person p
                 LEFT JOIN relationship_substrate.relationship_edge e
                   ON e.person_id = p.id
@@ -164,6 +197,7 @@ def operating_picture_rows(database_url: str, *, limit: int = 25) -> list[dict]:
             "provenance_status": row[6],
             "metadata": row[7],
             "unresolved_identity_candidates": row[8],
+            "calendar_interaction_count": row[9],
         }
         for row in rows
     ]

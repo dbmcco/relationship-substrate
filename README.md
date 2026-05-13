@@ -46,6 +46,7 @@ Run the agent-oriented local evidence loop:
 ```bash
 uv run relationship-substrate eval-local \
   --next-up-path "/Users/braydon/projects/personal/home_next_up/resources/Intempio CRM people import.xlsx" \
+  --calendar-path "/path/to/calendar-export.json" \
   --output-dir output/eval \
   --limit 25
 ```
@@ -62,6 +63,8 @@ uv run relationship-substrate ingest-next-up --path "/Users/braydon/projects/per
 uv run relationship-substrate materialize-exact-emails --source next_up
 uv run relationship-substrate ingest-msgvault-senders --limit 25
 uv run relationship-substrate materialize-msgvault-senders
+uv run relationship-substrate ingest-calendar --path "/path/to/calendar-export.json"
+uv run relationship-substrate materialize-calendar-events
 uv run relationship-substrate generate-identity-candidates
 uv run relationship-substrate list-identity-candidates --status candidate --limit 25
 uv run relationship-substrate show-identity-candidate --id "<candidate-id>"
@@ -84,6 +87,8 @@ Export the first operating-picture shape:
 uv run relationship-substrate export-operating-picture
 ```
 
-Current eval interpretation: the CLI now proves that Next Up curated exports can be ingested and materialized with preserved provenance, and msgvault sender/domain profiles can be read through the supported analytics commands. Msgvault sender profiles can also be materialized into aggregate `interaction` and `relationship_edge` rows, skipping known Braydon/self aliases by default. The operating picture remains conservative: direct email counts are interaction evidence, not relationship-health interpretation; rows from Next Up without matching email evidence remain `curated_export + unknown_upstream` identity seeds.
+Calendar ingestion accepts JSON exports with `items`, `events`, `data`, a bare event object, or a bare list of event objects. The expected event shape matches Google Calendar/n8n-style payloads: `id`, `summary`, `start.dateTime` or `start.date`, and `attendees[].email`. Calendar materialization skips self attendees and configured internal domains, creates attendee evidence, increments relationship edges, and stores `calendar_interaction_count` in operating-picture metadata.
+
+Current eval interpretation: the CLI now proves that Next Up curated exports can be ingested and materialized with preserved provenance, msgvault sender/domain profiles can be read through the supported analytics commands, and calendar exports can be materialized into attendee interaction evidence. Msgvault sender profiles can also be materialized into aggregate `interaction` and `relationship_edge` rows, skipping known Braydon/self aliases by default. The operating picture remains conservative: direct email/calendar counts are interaction evidence, not relationship-health interpretation; rows from Next Up without matching interaction evidence remain `curated_export + unknown_upstream` identity seeds.
 
 Identity candidates are unresolved review suggestions, not merges. The current candidate pass detects repeated non-generic email localparts across domains, suppresses role accounts such as `events`, `info`, and `hello`, and surfaces open candidate counts in the DB-backed operating picture metadata. Candidate review records a decision and note in evidence metadata; accepted/rejected/superseded decisions prevent the same pair from being regenerated.

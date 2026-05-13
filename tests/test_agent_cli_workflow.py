@@ -77,7 +77,7 @@ def test_agent_cli_ingests_materializes_and_exports_from_db(
         "export-operating-picture",
         "--from-db",
         "--limit",
-        "5",
+        "1000",
     )
     assert picture["relationships"]
     relationship = next(
@@ -114,6 +114,51 @@ def test_agent_cli_eval_local_writes_machine_readable_artifacts(
     assert report["identity_candidates"]["source"] == "identity_candidate"
     assert (output_dir / "eval_report.json").exists()
     assert (output_dir / "relationship_operating_picture.json").exists()
+
+
+def test_agent_cli_eval_local_can_include_calendar_json(database_url, tmp_path, monkeypatch, capsys):
+    run_migrations(database_url)
+    localpart = f"eval-calendar-{uuid4().hex}"
+    email = f"{localpart}@example.com"
+    workbook = _workbook(tmp_path / "eval_calendar_people.xlsx", email=email)
+    calendar_path = tmp_path / "eval-calendar.json"
+    calendar_path.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "id": f"event-{localpart}",
+                        "summary": "Eval calendar event",
+                        "start": {"dateTime": "2026-05-03T10:00:00-04:00"},
+                        "attendees": [
+                            {"email": "braydon@example.com", "self": True},
+                            {"email": email, "displayName": "Eval Calendar"},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "eval-calendar-output"
+
+    report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "eval-local",
+        "--next-up-path",
+        str(workbook),
+        "--calendar-path",
+        str(calendar_path),
+        "--output-dir",
+        str(output_dir),
+        "--skip-msgvault",
+    )
+
+    assert report["calendar"]["ingestion"]["events_seen"] == 1
+    assert report["calendar"]["materialization"]["attendees_materialized"] >= 1
 
 
 def test_agent_cli_generates_identity_candidates(database_url, monkeypatch, capsys):
@@ -213,3 +258,73 @@ def test_agent_cli_reviews_identity_candidate(database_url, monkeypatch, capsys)
     assert shown["id"] == candidate["id"]
     assert resolved["status"] == "rejected"
     assert resolved["evidence"]["review"]["note"] == "Not enough evidence to merge."
+
+
+def test_agent_cli_ingests_and_materializes_calendar_json(database_url, tmp_path, monkeypatch, capsys):
+    run_migrations(database_url)
+    calendar_path = tmp_path / "calendar.json"
+    localpart = f"calcli{uuid4().hex}"
+    calendar_path.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "id": f"event-{localpart}",
+                        "summary": "Calendar CLI smoke",
+                        "start": {"dateTime": "2026-05-02T10:00:00-04:00"},
+                        "attendees": [
+                            {"email": "braydon@example.com", "self": True},
+                            {"email": f"{localpart}@example.com", "displayName": "Calendar Person"},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ingested = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "ingest-calendar",
+        "--path",
+        str(calendar_path),
+    )
+    materialized = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "materialize-calendar-events",
+    )
+    picture = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "export-operating-picture",
+        "--from-db",
+        "--limit",
+        "1000",
+    )
+
+    assert ingested == {"source": "calendar", "events_seen": 1, "events_upserted": 1}
+    assert materialized["attendees_materialized"] >= 1
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT count(*)
+                FROM relationship_substrate.evidence_ref
+                WHERE ref_type = 'calendar_event'
+                AND ref_value = %s
+                """,
+                (f"calendar:{calendar_path.name}:event-{localpart}",),
+            )
+            assert cur.fetchone() == (1,)
+    relationship = next(
+        row for row in picture["relationships"] if row["metadata"]["primary_email"] == f"{localpart}@example.com"
+    )
+    assert relationship["metadata"]["calendar_interaction_count"] == 1

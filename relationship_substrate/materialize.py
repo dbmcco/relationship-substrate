@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 import psycopg
@@ -106,6 +107,195 @@ def materialize_exact_emails(
 
 def _sender_display_name(email: str) -> str:
     return email.split("@", 1)[0].replace(".", " ").replace("_", " ").strip() or email
+
+
+def _parse_calendar_time(value: object) -> datetime | None:
+    if isinstance(value, dict):
+        value = value.get("dateTime") or value.get("date")
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    parsed = (
+        datetime.fromisoformat(text)
+        if "T" in text
+        else datetime.combine(date.fromisoformat(text), datetime.min.time())
+    )
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _attendee_email(attendee: object) -> str | None:
+    if not isinstance(attendee, dict):
+        return None
+    return _clean_email(attendee.get("email"))
+
+
+def _attendee_name(attendee: dict, email: str) -> str:
+    name = str(attendee.get("displayName") or attendee.get("display_name") or "").strip()
+    return name or _sender_display_name(email)
+
+
+def materialize_calendar_events(
+    database_url: str,
+    *,
+    self_aliases: set[str],
+    skipped_domains: set[str],
+) -> dict[str, int | str]:
+    events = list_source_events(
+        database_url,
+        source_name="calendar",
+        source_event_type="calendar_event",
+    )
+    stats = {
+        "source": "calendar",
+        "events_seen": len(events),
+        "materialized_events": 0,
+        "attendees_materialized": 0,
+        "skipped_self": 0,
+        "skipped_domain": 0,
+        "skipped_missing_email": 0,
+        "skipped_existing": 0,
+    }
+    for event in events:
+        payload = event["source_payload"]
+        occurred_at = _parse_calendar_time(payload.get("start"))
+        attendees = payload.get("attendees") if isinstance(payload.get("attendees"), list) else []
+        materialized_attendees: list[str] = []
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM relationship_substrate.interaction
+                    WHERE source_event_id = %s
+                    """,
+                    (event["id"],),
+                )
+                if cur.fetchone() is not None:
+                    stats["skipped_existing"] += 1
+                    continue
+                for attendee in attendees:
+                    email = _attendee_email(attendee)
+                    if email is None:
+                        stats["skipped_missing_email"] += 1
+                        continue
+                    if email in self_aliases or (isinstance(attendee, dict) and attendee.get("self") is True):
+                        stats["skipped_self"] += 1
+                        continue
+                    if _email_domain(email) in skipped_domains:
+                        stats["skipped_domain"] += 1
+                        continue
+                    cur.execute(
+                        """
+                        INSERT INTO relationship_substrate.person (
+                          display_name, primary_email, source_posture, provenance_status, metadata
+                        )
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (primary_email)
+                        DO UPDATE SET
+                          display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), relationship_substrate.person.display_name),
+                          source_posture = EXCLUDED.source_posture,
+                          provenance_status = EXCLUDED.provenance_status,
+                          metadata = relationship_substrate.person.metadata || EXCLUDED.metadata,
+                          updated_at = now()
+                        RETURNING id
+                        """,
+                        (
+                            _attendee_name(attendee, email),
+                            email,
+                            event["source_posture"],
+                            event["provenance_status"],
+                            Jsonb({"trust_role": "calendar attendee evidence"}),
+                        ),
+                    )
+                    person_id = cur.fetchone()[0]
+                    cur.execute(
+                        """
+                        INSERT INTO relationship_substrate.contact_channel (
+                          person_id, channel_type, channel_value, source_posture, provenance_status
+                        )
+                        VALUES (%s, 'email', %s, %s, %s)
+                        ON CONFLICT (channel_type, channel_value)
+                        DO UPDATE SET
+                          person_id = EXCLUDED.person_id,
+                          source_posture = EXCLUDED.source_posture,
+                          provenance_status = EXCLUDED.provenance_status
+                        """,
+                        (person_id, email, event["source_posture"], event["provenance_status"]),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO relationship_substrate.relationship_edge (
+                          person_id, first_interaction_at, last_interaction_at, interaction_count, metadata
+                        )
+                        VALUES (%s, %s, %s, 1, %s)
+                        ON CONFLICT (person_id)
+                        DO UPDATE SET
+                          first_interaction_at = LEAST(
+                            COALESCE(
+                              relationship_substrate.relationship_edge.first_interaction_at,
+                              EXCLUDED.first_interaction_at
+                            ),
+                            COALESCE(
+                              EXCLUDED.first_interaction_at,
+                              relationship_substrate.relationship_edge.first_interaction_at
+                            )
+                          ),
+                          last_interaction_at = GREATEST(
+                            COALESCE(
+                              relationship_substrate.relationship_edge.last_interaction_at,
+                              EXCLUDED.last_interaction_at
+                            ),
+                            COALESCE(
+                              EXCLUDED.last_interaction_at,
+                              relationship_substrate.relationship_edge.last_interaction_at
+                            )
+                          ),
+                          interaction_count = relationship_substrate.relationship_edge.interaction_count + 1,
+                          metadata = relationship_substrate.relationship_edge.metadata || jsonb_build_object(
+                            'calendar_interaction_count',
+                            COALESCE((relationship_substrate.relationship_edge.metadata->>'calendar_interaction_count')::int, 0) + 1,
+                            'source',
+                            'calendar_event'
+                          )
+                        """,
+                        (
+                            person_id,
+                            occurred_at,
+                            occurred_at,
+                            Jsonb({"source": "calendar_event", "calendar_interaction_count": 1}),
+                        ),
+                    )
+                    materialized_attendees.append(email)
+                    stats["attendees_materialized"] += 1
+                cur.execute(
+                    """
+                    INSERT INTO relationship_substrate.interaction (
+                      source_event_id, interaction_type, occurred_at, subject, metadata
+                    )
+                    VALUES (%s, 'calendar_event', %s, %s, %s)
+                    """,
+                    (
+                        event["id"],
+                        occurred_at,
+                        payload.get("summary"),
+                        Jsonb(
+                            {
+                                "attendee_emails": materialized_attendees,
+                                "aggregate": True,
+                                "source": "calendar_export",
+                            }
+                        ),
+                    ),
+                )
+                stats["materialized_events"] += 1
+            conn.commit()
+    return stats
 
 
 def materialize_msgvault_sender(database_url: str, source_event_id: UUID) -> UUID:
