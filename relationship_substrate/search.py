@@ -72,6 +72,29 @@ def _semantic_sort_key(row: dict[str, Any]) -> tuple[float, int, str]:
     )
 
 
+def _enrichment_matches_employee_range(
+    enrichment: dict[str, Any] | None,
+    *,
+    actual_employee_count_min: int | None,
+    actual_employee_count_max: int | None,
+) -> bool:
+    if actual_employee_count_min is None and actual_employee_count_max is None:
+        return True
+    if enrichment is None:
+        return False
+    employee_min = enrichment.get("employee_count_min")
+    employee_max = enrichment.get("employee_count_max")
+    if employee_min is None and employee_max is None:
+        return False
+    low = int(employee_min if employee_min is not None else employee_max)
+    high = int(employee_max if employee_max is not None else employee_min)
+    if actual_employee_count_min is not None and high < actual_employee_count_min:
+        return False
+    if actual_employee_count_max is not None and low > actual_employee_count_max:
+        return False
+    return True
+
+
 def _curated_contact_rows(
     database_url: str,
     *,
@@ -146,6 +169,8 @@ def search_people(
     company_size_max: int | None = None,
     known_people_at_company_min: int | None = None,
     known_people_at_company_max: int | None = None,
+    actual_employee_count_min: int | None = None,
+    actual_employee_count_max: int | None = None,
     semantic_query_embedding: list[float] | None = None,
     sort: str | None = None,
     limit: int = 25,
@@ -187,6 +212,13 @@ def search_people(
             and known_people_at_company_count > known_people_at_company_max
         ):
             continue
+        organization_enrichment = organization_enrichments.get(company.lower())
+        if not _enrichment_matches_employee_range(
+            organization_enrichment,
+            actual_employee_count_min=actual_employee_count_min,
+            actual_employee_count_max=actual_employee_count_max,
+        ):
+            continue
         title = _clean_text(payload.get("title"))
         keyword_matches = _keyword_matches(haystack=title, keywords=keywords)
         if keywords and not keyword_matches:
@@ -208,7 +240,7 @@ def search_people(
                 "title": title,
                 "company": company,
                 "known_people_at_company_count": known_people_at_company_count,
-                "organization_enrichment": organization_enrichments.get(company.lower()),
+                "organization_enrichment": organization_enrichment,
                 "relationship": {
                     "interaction_count": row["interaction_count"],
                     "last_interaction_at": row["last_interaction_at"],

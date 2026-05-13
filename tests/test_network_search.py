@@ -312,3 +312,72 @@ def test_search_people_separates_known_people_count_from_organization_enrichment
         "source_url": "https://example.com/company-profile",
         "provenance_status": "external_research",
     }
+
+
+def test_search_people_filters_by_actual_organization_size_not_known_people(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    small_company = f"Small Medcoms {run_id}"
+    enterprise_company = f"Enterprise Pharma Size Filter {run_id}"
+    unknown_company = f"Unknown Size Medcoms {run_id}"
+    small_email = f"small-size-{run_id}@example.com"
+    enterprise_email = f"enterprise-size-{run_id}@example.com"
+    unknown_email = f"unknown-size-{run_id}@example.com"
+
+    for company, email in [
+        (small_company, small_email),
+        (enterprise_company, enterprise_email),
+        (unknown_company, unknown_email),
+    ]:
+        _curated_contact(
+            database_url,
+            email=email,
+            title="Medical Communications Consultant",
+            company=company,
+            full_name=f"Contact {company}",
+        )
+        for index in range(14):
+            _curated_contact(
+                database_url,
+                email=f"peer-{index}-{email}",
+                title="Peer",
+                company=company,
+                full_name=f"Peer {index}",
+            )
+    materialize_exact_emails(database_url)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=small_company,
+        company_type="medical_communications_consultancy",
+        employee_count_min=10,
+        employee_count_max=20,
+        employee_count_label="small_team",
+        source_name="manual_research",
+        provenance_status="external_research",
+    )
+    upsert_organization_enrichment(
+        database_url,
+        company_name=enterprise_company,
+        company_type="public_pharmaceutical_company",
+        employee_count_min=50000,
+        employee_count_label="enterprise",
+        source_name="manual_research",
+        provenance_status="external_research",
+    )
+
+    results = search_people(
+        database_url,
+        role_keywords=["medical communications", "consultant"],
+        actual_employee_count_min=10,
+        actual_employee_count_max=20,
+        limit=1000,
+    )
+
+    result_emails = {row["email"] for row in results}
+    result = next(row for row in results if row["email"] == small_email)
+    assert small_email in result_emails
+    assert enterprise_email not in result_emails
+    assert unknown_email not in result_emails
+    assert result["known_people_at_company_count"] == 15
+    assert result["organization_enrichment"]["employee_count_min"] == 10
+    assert result["organization_enrichment"]["employee_count_max"] == 20
