@@ -191,3 +191,29 @@ def test_history_backed_organization_worklist_ranks_companies_by_direct_history(
     assert history_only["direct_people_count"] == 1
     assert history_only["total_interaction_count"] == 9
     assert all(row["domain"] != "gmail.com" for row in rows)
+
+
+def test_history_backed_organization_worklist_excludes_known_non_target_domains_by_default(database_url):
+    run_migrations(database_url)
+    ingest_msgvault_sender_rows(
+        database_url,
+        [
+            {"email": "one@rvibe.com", "display_name": "Rvibe Person", "message_count": 50},
+            {
+                "email": "two@thepracticalaccountant.com",
+                "display_name": "Accountant Person",
+                "message_count": 40,
+            },
+            {"email": "three@lehigh.edu", "display_name": "Lehigh Person", "message_count": 30},
+        ],
+        self_aliases=set(),
+        skipped_domains=set(),
+    )
+    materialize_msgvault_senders(database_url)
+
+    rows = history_backed_organization_worklist(database_url, limit=1000)
+
+    domains = {row["domain"] for row in rows}
+    assert "rvibe.com" not in domains
+    assert "thepracticalaccountant.com" not in domains
+    assert "lehigh.edu" not in domains

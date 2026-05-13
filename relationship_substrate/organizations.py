@@ -15,12 +15,15 @@ DEFAULT_SKIPPED_ORGANIZATION_DOMAINS = {
     "hotmail.com",
     "icloud.com",
     "intempio.com",
+    "lehigh.edu",
     "live.com",
     "me.com",
     "msn.com",
     "outlook.com",
     "proton.me",
     "protonmail.com",
+    "rvibe.com",
+    "thepracticalaccountant.com",
     "yahoo.com",
 }
 
