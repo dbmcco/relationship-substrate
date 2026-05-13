@@ -383,3 +383,105 @@ def test_agent_cli_shows_person_dossier(database_url, tmp_path, monkeypatch, cap
     assert dossier["person"]["primary_email"] == email
     assert dossier["relationship_edge"]["calendar_interaction_count"] == 1
     assert dossier["interactions"][0]["subject"] == "CLI dossier meeting"
+
+
+def test_agent_cli_searches_people_by_role_and_company_size(
+    database_url, tmp_path, monkeypatch, capsys
+):
+    run_migrations(database_url)
+    localpart = uuid4().hex
+    workbook = tmp_path / "search_people.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Contacts"
+    ws.append(["First Name", "Last Name", "Title", "Company", "Email"])
+    for index in range(10):
+        title = "Principal Consultant" if index == 0 else "Delivery Lead"
+        ws.append(
+            [
+                f"Search{index}",
+                "Person",
+                title,
+                f"CLI Search Advisors {localpart}",
+                f"cli-search-{index}-{localpart}@example.com",
+            ]
+        )
+    wb.save(workbook)
+
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "ingest-next-up",
+        "--path",
+        str(workbook),
+    )
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "materialize-exact-emails",
+    )
+
+    report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "search-people",
+        "--role-keywords",
+        "consultant",
+        "--company-size-min",
+        "10",
+        "--company-size-max",
+        "15",
+        "--limit",
+        "10",
+    )
+
+    result = next(
+        row for row in report["results"] if row["email"] == f"cli-search-0-{localpart}@example.com"
+    )
+    assert result["company_people_count"] == 10
+
+
+def test_agent_cli_embeds_curated_contacts_with_hash_provider(
+    database_url, tmp_path, monkeypatch, capsys
+):
+    run_migrations(database_url)
+    workbook = _workbook(
+        tmp_path / "embed_people.xlsx",
+        email=f"cli-embed-{uuid4().hex}@example.com",
+    )
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "ingest-next-up",
+        "--path",
+        str(workbook),
+    )
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "materialize-exact-emails",
+    )
+
+    report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "embed-curated-contacts",
+        "--provider",
+        "hash",
+    )
+
+    assert report["source"] == "next_up"
+    assert report["embedded"] >= 1
+    assert report["provider"] == "hash"

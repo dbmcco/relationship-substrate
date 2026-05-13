@@ -37,6 +37,19 @@ The system should preserve raw source evidence before it materializes canonical 
 4. What should I do next?
    Agent-readable recommendations for who to talk to, why now, what context matters, what entry points are available, and what uncertainty remains.
 
+## Canonical Target Workflow
+
+The first North Star workflow is goal-conditioned network search:
+
+1. Ask for people from Braydon's network matching a goal, such as "consultant-like people at companies where I know 10-15 people."
+2. Use embeddings for semantic matching against the goal, plus explicit structured constraints such as known-company count.
+3. Return ranked candidates with role, company, known people at that company, semantic similarity, interaction count, freshness, and source evidence.
+4. Evaluate which candidates have the strongest relationship evidence before drafting anything.
+5. Research recent context about the selected person or organization with fresh external sources.
+6. Draft an email that cites the relationship context and current entry point without pretending enrichment is direct relationship evidence.
+
+The current executable slice is `search-people`: it searches Next Up curated contact evidence, counts known people per company inside the substrate, can rank by pgvector semantic similarity when embeddings are populated, can rank by materialized relationship strength, and returns provenance. It does not yet research recent news or write outreach.
+
 ## Non-Negotiable Principles
 
 - Preserve provenance for every source-derived fact.
@@ -80,9 +93,10 @@ Relationship Substrate is not:
 2. Add person dossiers that show evidence, interactions, identity candidates, and provenance in one agent-readable command.
 3. Add a conservative freshness read model based on interaction dates and explicit uncertainty.
 4. Add interpreted state proposals for relationship summaries, open loops, and discussion entry points.
-5. Add goal-conditioned contact recommendations with evidence-backed rationale.
-6. Add browser or LinkedIn enrichment only as secondary, provenance-marked evidence.
-7. Project substrate read models into richer UI or Graph CRM surfaces once the substrate is trustworthy.
+5. Expand goal-conditioned contact search into recommendations with evidence-backed rationale.
+6. Add recent-news research and outreach drafting as a separate evidence/proposal stage.
+7. Add browser or LinkedIn enrichment only as secondary, provenance-marked evidence.
+8. Project substrate read models into richer UI or Graph CRM surfaces once the substrate is trustworthy.
 
 ## Definition Of Success
 

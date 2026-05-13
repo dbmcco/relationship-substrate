@@ -11,6 +11,12 @@ from relationship_substrate.config import Settings
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
 from relationship_substrate.dossiers import get_person_dossier
+from relationship_substrate.embeddings import (
+    DEFAULT_EMBEDDING_MODEL,
+    embed_curated_contacts,
+    hash_embed_texts,
+    openai_embed_texts,
+)
 from relationship_substrate.identity import (
     generate_identity_candidates,
     get_identity_candidate,
@@ -29,6 +35,7 @@ from relationship_substrate.repositories import (
     upsert_evidence_ref,
     upsert_source_event,
 )
+from relationship_substrate.search import DEFAULT_ROLE_KEYWORDS, search_people
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,6 +78,19 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_candidate.add_argument("--note", required=True)
     show_person = subparsers.add_parser("show-person")
     show_person.add_argument("--email", required=True)
+    search = subparsers.add_parser("search-people")
+    search.add_argument("--role-keywords", default=",".join(DEFAULT_ROLE_KEYWORDS))
+    search.add_argument("--company-size-min", type=int, default=None)
+    search.add_argument("--company-size-max", type=int, default=None)
+    search.add_argument("--semantic-query", default=None)
+    search.add_argument("--semantic-provider", choices=["openai", "hash"], default="openai")
+    search.add_argument("--embedding-model", default=DEFAULT_EMBEDDING_MODEL)
+    search.add_argument("--sort", choices=["relationship", "semantic"], default=None)
+    search.add_argument("--limit", type=int, default=25)
+    embed = subparsers.add_parser("embed-curated-contacts")
+    embed.add_argument("--provider", choices=["openai", "hash"], default="openai")
+    embed.add_argument("--model", default=DEFAULT_EMBEDDING_MODEL)
+    embed.add_argument("--limit", type=int, default=None)
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -101,6 +121,16 @@ def _settings(args: argparse.Namespace) -> Settings:
 
 def _print_json(payload: object) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _comma_separated(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _embedding_function(provider: str, *, model: str):
+    if provider == "hash":
+        return hash_embed_texts
+    return lambda texts: openai_embed_texts(texts, model=model)
 
 
 def ingest_next_up(database_url: str, path: Path) -> dict[str, int | str]:
@@ -409,6 +439,51 @@ def main() -> int:
         return 0
     if args.command == "show-person":
         _print_json(get_person_dossier(settings.database_url, email=args.email))
+        return 0
+    if args.command == "embed-curated-contacts":
+        run_migrations(settings.database_url)
+        _print_json(
+            embed_curated_contacts(
+                settings.database_url,
+                embed_texts=_embedding_function(args.provider, model=args.model),
+                provider_name=args.provider,
+                model=args.model,
+                limit=args.limit,
+            )
+        )
+        return 0
+    if args.command == "search-people":
+        semantic_query_embedding = None
+        if args.semantic_query:
+            semantic_query_embedding = _embedding_function(
+                args.semantic_provider,
+                model=args.embedding_model,
+            )([args.semantic_query])[0]
+        results = search_people(
+            settings.database_url,
+            role_keywords=_comma_separated(args.role_keywords),
+            company_size_min=args.company_size_min,
+            company_size_max=args.company_size_max,
+            semantic_query_embedding=semantic_query_embedding,
+            sort=args.sort,
+            limit=args.limit,
+        )
+        _print_json(
+            {
+                "query": {
+                    "role_keywords": _comma_separated(args.role_keywords),
+                    "company_size_min": args.company_size_min,
+                    "company_size_max": args.company_size_max,
+                    "semantic_query": args.semantic_query,
+                    "semantic_provider": args.semantic_provider if args.semantic_query else None,
+                    "embedding_model": args.embedding_model if args.semantic_query else None,
+                    "sort": args.sort,
+                    "limit": args.limit,
+                },
+                "count": len(results),
+                "results": results,
+            }
+        )
         return 0
     if args.command == "export-operating-picture":
         if args.from_db:
