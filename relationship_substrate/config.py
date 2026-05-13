@@ -16,6 +16,10 @@ DEFAULT_SELF_EMAIL_ALIASES = (
     "braydonjm@gmail.com",
 )
 
+DEFAULT_SKIPPED_SENDER_DOMAINS = (
+    "intempio.com",
+)
+
 
 def _csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     value = os.environ.get(name)
@@ -45,4 +49,8 @@ class Settings:
     self_email_aliases: tuple[str, ...] = _csv_env(
         "RELATIONSHIP_SUBSTRATE_SELF_EMAILS",
         DEFAULT_SELF_EMAIL_ALIASES,
+    )
+    skipped_sender_domains: tuple[str, ...] = _csv_env(
+        "RELATIONSHIP_SUBSTRATE_SKIPPED_SENDER_DOMAINS",
+        DEFAULT_SKIPPED_SENDER_DOMAINS,
     )

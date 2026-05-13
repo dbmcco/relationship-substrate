@@ -7,25 +7,42 @@ from relationship_substrate.db import run_migrations
 from relationship_substrate.materialize import materialize_msgvault_senders
 
 
+def _delete_sender_events(database_url, *emails: str) -> None:
+    keys = tuple(f"msgvault:sender:{email}" for email in emails)
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM relationship_substrate.source_event
+                WHERE source_event_key = ANY(%s)
+                """,
+                (list(keys),),
+            )
+        conn.commit()
+
+
 def test_ingest_msgvault_sender_rows_filters_self_aliases(database_url):
     run_migrations(database_url)
+    _delete_sender_events(database_url, "braydon@intempio.com", "external@example.com")
 
     stats = ingest_msgvault_sender_rows(
         database_url,
         [
             {"email": "braydon@intempio.com", "message_count": 11721},
-            {"email": "anne@intempio.com", "message_count": 2600},
+            {"email": "external@example.com", "message_count": 2600},
         ],
         self_aliases={"braydon@intempio.com"},
+        skipped_domains=set(),
     )
 
     assert stats == {
         "source": "msgvault",
         "events_seen": 2,
-        "events_upserted": 1,
-        "skipped_self": 1,
-        "skipped_missing_email": 0,
-    }
+            "events_upserted": 1,
+            "skipped_self": 1,
+            "skipped_domain": 0,
+            "skipped_missing_email": 0,
+        }
 
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
@@ -35,21 +52,58 @@ def test_ingest_msgvault_sender_rows_filters_self_aliases(database_url):
                 FROM relationship_substrate.source_event
                 WHERE source_name = 'msgvault'
                 AND source_event_type = 'sender_profile'
-                AND source_event_key IN ('msgvault:sender:braydon@intempio.com', 'msgvault:sender:anne@intempio.com')
+                AND source_event_key IN ('msgvault:sender:braydon@intempio.com', 'msgvault:sender:external@example.com')
                 ORDER BY source_event_key
                 """
             )
             rows = cur.fetchall()
 
-    assert rows == [("direct_interaction", "msgvault_profile", "anne@intempio.com")]
+    assert rows == [("direct_interaction", "msgvault_profile", "external@example.com")]
+
+
+def test_ingest_msgvault_sender_rows_filters_skipped_domains(database_url):
+    run_migrations(database_url)
+    _delete_sender_events(database_url, "anne@intempio.com", "external@example.com")
+
+    stats = ingest_msgvault_sender_rows(
+        database_url,
+        [
+            {"email": "anne@intempio.com", "message_count": 2600},
+            {"email": "external@example.com", "message_count": 12},
+        ],
+        self_aliases=set(),
+        skipped_domains={"intempio.com"},
+    )
+
+    assert stats["events_seen"] == 2
+    assert stats["events_upserted"] == 1
+    assert stats["skipped_domain"] == 1
+
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT source_payload->>'email'
+                FROM relationship_substrate.source_event
+                WHERE source_name = 'msgvault'
+                AND source_event_type = 'sender_profile'
+                AND source_event_key IN ('msgvault:sender:anne@intempio.com', 'msgvault:sender:external@example.com')
+                ORDER BY source_event_key
+                """
+            )
+            rows = [row[0] for row in cur.fetchall()]
+
+    assert rows == ["external@example.com"]
 
 
 def test_materialize_msgvault_senders_creates_relationship_edges(database_url):
     run_migrations(database_url)
+    _delete_sender_events(database_url, "anne@intempio.com")
     ingest_msgvault_sender_rows(
         database_url,
         [{"email": "anne@intempio.com", "message_count": 2600, "total_size": 398593897}],
         self_aliases=set(),
+        skipped_domains=set(),
     )
 
     stats = materialize_msgvault_senders(database_url)

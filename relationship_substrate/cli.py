@@ -50,6 +50,7 @@ def _settings(args: argparse.Namespace) -> Settings:
             msgvault_home=settings.msgvault_home,
             msgvault_config=settings.msgvault_config,
             self_email_aliases=settings.self_email_aliases,
+            skipped_sender_domains=settings.skipped_sender_domains,
         )
     return settings
 
@@ -84,6 +85,7 @@ def ingest_msgvault_sender_rows(
     rows: list[dict[str, object]],
     *,
     self_aliases: set[str],
+    skipped_domains: set[str],
 ) -> dict[str, int | str]:
     run_migrations(database_url)
     stats = {
@@ -91,6 +93,7 @@ def ingest_msgvault_sender_rows(
         "events_seen": len(rows),
         "events_upserted": 0,
         "skipped_self": 0,
+        "skipped_domain": 0,
         "skipped_missing_email": 0,
     }
     for row in rows:
@@ -101,6 +104,10 @@ def ingest_msgvault_sender_rows(
             continue
         if email in self_aliases:
             stats["skipped_self"] += 1
+            continue
+        domain = email.rsplit("@", 1)[-1]
+        if domain in skipped_domains:
+            stats["skipped_domain"] += 1
             continue
         event = SourceEventIn(
             source_name="msgvault",
@@ -130,7 +137,13 @@ def ingest_msgvault_senders(
 ) -> dict[str, int | str]:
     rows = MsgvaultAdapter(settings).top_sender_candidates(limit)
     self_aliases = set() if include_self else set(settings.self_email_aliases)
-    return ingest_msgvault_sender_rows(settings.database_url, rows, self_aliases=self_aliases)
+    skipped_domains = set() if include_self else set(settings.skipped_sender_domains)
+    return ingest_msgvault_sender_rows(
+        settings.database_url,
+        rows,
+        self_aliases=self_aliases,
+        skipped_domains=skipped_domains,
+    )
 
 
 def operating_picture_from_db(database_url: str, *, limit: int) -> dict:
@@ -163,6 +176,7 @@ def run_local_eval(
             settings.database_url,
             msgvault.get("senders", []),
             self_aliases=set(settings.self_email_aliases),
+            skipped_domains=set(settings.skipped_sender_domains),
         )
         msgvault_materialization = materialize_msgvault_senders(settings.database_url)
         msgvault["sender_ingestion"] = sender_ingestion
