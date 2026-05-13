@@ -9,7 +9,12 @@ from relationship_substrate.adapters.msgvault import MsgvaultAdapter
 from relationship_substrate.config import Settings
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
-from relationship_substrate.identity import generate_identity_candidates
+from relationship_substrate.identity import (
+    generate_identity_candidates,
+    get_identity_candidate,
+    list_identity_candidates,
+    resolve_identity_candidate,
+)
 from relationship_substrate.materialize import materialize_exact_emails, materialize_msgvault_senders
 from relationship_substrate.repositories import (
     identity_candidate_counts,
@@ -37,6 +42,23 @@ def build_parser() -> argparse.ArgumentParser:
     materialize.add_argument("--source", default="next_up")
     subparsers.add_parser("materialize-msgvault-senders")
     subparsers.add_parser("generate-identity-candidates")
+    list_candidates = subparsers.add_parser("list-identity-candidates")
+    list_candidates.add_argument(
+        "--status",
+        choices=["candidate", "accepted", "rejected", "superseded"],
+        default="candidate",
+    )
+    list_candidates.add_argument("--limit", type=int, default=25)
+    show_candidate = subparsers.add_parser("show-identity-candidate")
+    show_candidate.add_argument("--id", required=True)
+    resolve_candidate = subparsers.add_parser("resolve-identity-candidate")
+    resolve_candidate.add_argument("--id", required=True)
+    resolve_candidate.add_argument(
+        "--status",
+        choices=["accepted", "rejected", "superseded", "candidate"],
+        required=True,
+    )
+    resolve_candidate.add_argument("--note", required=True)
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -299,6 +321,23 @@ def main() -> int:
         return 0
     if args.command == "generate-identity-candidates":
         _print_json(generate_identity_candidate_report(settings.database_url))
+        return 0
+    if args.command == "list-identity-candidates":
+        candidates = list_identity_candidates(settings.database_url, status=args.status, limit=args.limit)
+        _print_json({"candidates": candidates, "count": len(candidates)})
+        return 0
+    if args.command == "show-identity-candidate":
+        _print_json(get_identity_candidate(settings.database_url, args.id))
+        return 0
+    if args.command == "resolve-identity-candidate":
+        _print_json(
+            resolve_identity_candidate(
+                settings.database_url,
+                args.id,
+                status=args.status,
+                note=args.note,
+            )
+        )
         return 0
     if args.command == "export-operating-picture":
         if args.from_db:

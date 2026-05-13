@@ -5,7 +5,12 @@ from uuid import uuid4
 import psycopg
 
 from relationship_substrate.cli import generate_identity_candidate_report
-from relationship_substrate.identity import generate_identity_candidates
+from relationship_substrate.identity import (
+    generate_identity_candidates,
+    get_identity_candidate,
+    list_identity_candidates,
+    resolve_identity_candidate,
+)
 from relationship_substrate.repositories import operating_picture_rows
 
 
@@ -119,3 +124,76 @@ def test_generate_identity_candidate_report_includes_total_open_candidates(datab
     assert report["source"] == "identity_candidate"
     assert report["candidate_pairs"] >= 1
     assert report["open_candidates"] >= 1
+
+
+def test_list_and_get_identity_candidates_include_review_evidence(database_url):
+    localpart = f"candidateepsilon{uuid4().hex}"
+    _insert_person(database_url, name="Candidate Epsilon", email=f"{localpart}@example.com")
+    _insert_person(database_url, name="Candidate Epsilon", email=f"{localpart}@other.example")
+    generate_identity_candidates(database_url)
+
+    candidates = list_identity_candidates(database_url, status="candidate", limit=1000)
+    candidate = next(row for row in candidates if row["evidence"]["match_key"] == localpart)
+    loaded = get_identity_candidate(database_url, candidate["id"])
+
+    assert candidate["status"] == "candidate"
+    assert candidate["source_identity"]["identity_value"] == f"{localpart}@example.com"
+    assert candidate["candidate"]["primary_email"] == f"{localpart}@other.example"
+    assert loaded == candidate
+
+
+def test_resolve_identity_candidate_records_decision_without_merging_people(database_url):
+    localpart = f"candidatezeta{uuid4().hex}"
+    _insert_person(database_url, name="Candidate Zeta", email=f"{localpart}@example.com")
+    _insert_person(database_url, name="Candidate Zeta", email=f"{localpart}@other.example")
+    generate_identity_candidates(database_url)
+    candidate = next(
+        row
+        for row in list_identity_candidates(database_url, status="candidate", limit=1000)
+        if row["evidence"]["match_key"] == localpart
+    )
+
+    resolved = resolve_identity_candidate(
+        database_url,
+        candidate["id"],
+        status="rejected",
+        note="Different people; same first name only.",
+    )
+
+    assert resolved["status"] == "rejected"
+    assert resolved["evidence"]["review"]["note"] == "Different people; same first name only."
+    assert resolved["evidence"]["review"]["decision"] == "rejected"
+    assert list_identity_candidates(database_url, status="candidate", limit=1000) != [resolved]
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT count(*)
+                FROM relationship_substrate.person
+                WHERE primary_email IN (%s, %s)
+                """,
+                (f"{localpart}@example.com", f"{localpart}@other.example"),
+            )
+            assert cur.fetchone() == (2,)
+
+
+def test_resolved_identity_candidate_is_not_regenerated(database_url):
+    localpart = f"candidateeta{uuid4().hex}"
+    _insert_person(database_url, name="Candidate Eta", email=f"{localpart}@example.com")
+    _insert_person(database_url, name="Candidate Eta", email=f"{localpart}@other.example")
+    generate_identity_candidates(database_url)
+    candidate = next(
+        row
+        for row in list_identity_candidates(database_url, status="candidate", limit=1000)
+        if row["evidence"]["match_key"] == localpart
+    )
+    resolve_identity_candidate(database_url, candidate["id"], status="rejected", note="Reviewed.")
+
+    stats = generate_identity_candidates(database_url)
+
+    assert stats["candidate_pairs"] == 0
+    assert [
+        row
+        for row in list_identity_candidates(database_url, status="candidate", limit=1000)
+        if row["evidence"]["match_key"] == localpart
+    ] == []

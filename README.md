@@ -63,6 +63,9 @@ uv run relationship-substrate materialize-exact-emails --source next_up
 uv run relationship-substrate ingest-msgvault-senders --limit 25
 uv run relationship-substrate materialize-msgvault-senders
 uv run relationship-substrate generate-identity-candidates
+uv run relationship-substrate list-identity-candidates --status candidate --limit 25
+uv run relationship-substrate show-identity-candidate --id "<candidate-id>"
+uv run relationship-substrate resolve-identity-candidate --id "<candidate-id>" --status rejected --note "review note"
 uv run relationship-substrate export-operating-picture --from-db --limit 25
 ```
 
@@ -83,4 +86,4 @@ uv run relationship-substrate export-operating-picture
 
 Current eval interpretation: the CLI now proves that Next Up curated exports can be ingested and materialized with preserved provenance, and msgvault sender/domain profiles can be read through the supported analytics commands. Msgvault sender profiles can also be materialized into aggregate `interaction` and `relationship_edge` rows, skipping known Braydon/self aliases by default. The operating picture remains conservative: direct email counts are interaction evidence, not relationship-health interpretation; rows from Next Up without matching email evidence remain `curated_export + unknown_upstream` identity seeds.
 
-Identity candidates are unresolved review suggestions, not merges. The current candidate pass detects repeated non-generic email localparts across domains, suppresses role accounts such as `events`, `info`, and `hello`, and surfaces open candidate counts in the DB-backed operating picture metadata.
+Identity candidates are unresolved review suggestions, not merges. The current candidate pass detects repeated non-generic email localparts across domains, suppresses role accounts such as `events`, `info`, and `hello`, and surfaces open candidate counts in the DB-backed operating picture metadata. Candidate review records a decision and note in evidence metadata; accepted/rejected/superseded decisions prevent the same pair from being regenerated.

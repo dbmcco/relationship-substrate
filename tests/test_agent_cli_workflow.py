@@ -147,3 +147,69 @@ def test_agent_cli_generates_identity_candidates(database_url, monkeypatch, caps
     assert report["source"] == "identity_candidate"
     assert report["candidate_pairs"] >= 1
     assert report["open_candidates"] >= 1
+
+
+def test_agent_cli_reviews_identity_candidate(database_url, monkeypatch, capsys):
+    run_migrations(database_url)
+    localpart = f"clireviewcandidate{uuid4().hex}"
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.person (
+                  display_name, primary_email, source_posture, provenance_status
+                )
+                VALUES
+                  ('CLI Review Candidate', %s, 'direct_interaction', 'test'),
+                  ('CLI Review Candidate', %s, 'direct_interaction', 'test')
+                ON CONFLICT (primary_email)
+                DO UPDATE SET display_name = EXCLUDED.display_name
+                """,
+                (f"{localpart}@example.com", f"{localpart}@other.example"),
+            )
+        conn.commit()
+
+    _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "generate-identity-candidates",
+    )
+    listed = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "list-identity-candidates",
+        "--limit",
+        "1000",
+    )
+    candidate = next(row for row in listed["candidates"] if row["evidence"]["match_key"] == localpart)
+
+    shown = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "show-identity-candidate",
+        "--id",
+        candidate["id"],
+    )
+    resolved = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "resolve-identity-candidate",
+        "--id",
+        candidate["id"],
+        "--status",
+        "rejected",
+        "--note",
+        "Not enough evidence to merge.",
+    )
+
+    assert shown["id"] == candidate["id"]
+    assert resolved["status"] == "rejected"
+    assert resolved["evidence"]["review"]["note"] == "Not enough evidence to merge."

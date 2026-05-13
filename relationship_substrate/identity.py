@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import itertools
+from datetime import UTC, datetime
+from typing import Any
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -57,11 +59,127 @@ def _candidate_exists(cur: psycopg.Cursor, *, source_identity_id: str, candidate
         WHERE source_identity_id = %s
         AND candidate_id = %s
         AND reason = %s
-        AND status = 'candidate'
         """,
         (source_identity_id, candidate_id, reason),
     )
     return cur.fetchone() is not None
+
+
+def _candidate_payload(row: tuple) -> dict[str, Any]:
+    return {
+        "id": str(row[0]),
+        "status": row[1],
+        "reason": row[2],
+        "evidence": row[3],
+        "created_at": row[4].isoformat() if row[4] else None,
+        "source_identity": {
+            "id": str(row[5]),
+            "identity_type": row[6],
+            "identity_value": row[7],
+            "display_name": row[8],
+            "metadata": row[9],
+        },
+        "candidate": {
+            "type": row[10],
+            "id": str(row[11]) if row[11] else None,
+            "display_name": row[12],
+            "primary_email": row[13],
+        },
+    }
+
+
+def _candidate_select_sql() -> str:
+    return """
+        SELECT
+          ic.id,
+          ic.status,
+          ic.reason,
+          ic.evidence,
+          ic.created_at,
+          si.id,
+          si.identity_type,
+          si.identity_value,
+          si.display_name,
+          si.metadata,
+          ic.candidate_type,
+          ic.candidate_id,
+          p.display_name,
+          p.primary_email
+        FROM relationship_substrate.identity_candidate ic
+        JOIN relationship_substrate.source_identity si
+          ON si.id = ic.source_identity_id
+        LEFT JOIN relationship_substrate.person p
+          ON p.id = ic.candidate_id
+    """
+
+
+def list_identity_candidates(
+    database_url: str,
+    *,
+    status: str = "candidate",
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                _candidate_select_sql()
+                + """
+                WHERE ic.status = %s
+                ORDER BY ic.created_at DESC, ic.id
+                LIMIT %s
+                """,
+                (status, limit),
+            )
+            rows = cur.fetchall()
+    return [_candidate_payload(row) for row in rows]
+
+
+def get_identity_candidate(database_url: str, candidate_id: str) -> dict[str, Any]:
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                _candidate_select_sql()
+                + """
+                WHERE ic.id = %s
+                """,
+                (candidate_id,),
+            )
+            row = cur.fetchone()
+    if row is None:
+        raise ValueError(f"identity candidate not found: {candidate_id}")
+    return _candidate_payload(row)
+
+
+def resolve_identity_candidate(
+    database_url: str,
+    candidate_id: str,
+    *,
+    status: str,
+    note: str,
+) -> dict[str, Any]:
+    if status not in {"accepted", "rejected", "superseded", "candidate"}:
+        raise ValueError(f"unsupported identity candidate status: {status}")
+
+    candidate = get_identity_candidate(database_url, candidate_id)
+    evidence = dict(candidate["evidence"] or {})
+    evidence["review"] = {
+        "decision": status,
+        "note": note,
+        "reviewed_at": datetime.now(UTC).isoformat(),
+    }
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE relationship_substrate.identity_candidate
+                SET status = %s,
+                    evidence = %s
+                WHERE id = %s
+                """,
+                (status, Jsonb(evidence), candidate_id),
+            )
+        conn.commit()
+    return get_identity_candidate(database_url, candidate_id)
 
 
 def generate_identity_candidates(database_url: str) -> dict[str, int | str]:
