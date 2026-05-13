@@ -71,9 +71,9 @@ uv run relationship-substrate list-identity-candidates --status candidate --limi
 uv run relationship-substrate show-identity-candidate --id "<candidate-id>"
 uv run relationship-substrate resolve-identity-candidate --id "<candidate-id>" --status rejected --note "review note"
 uv run relationship-substrate show-person --email "person@example.com"
-uv run relationship-substrate embed-curated-contacts --provider openai --limit 250
+uv run relationship-substrate embed-curated-contacts --provider ollama --model mxbai-embed-large:latest --limit 250
 uv run relationship-substrate search-people --role-keywords "consultant,advisor,principal,strategy,operations,supply,medical communications,commercial" --company-size-min 10 --company-size-max 15 --limit 10
-uv run relationship-substrate search-people --role-keywords "" --semantic-query "consultants or advisory firms in medcomms, pharma operations, supply chain, or business consulting" --company-size-min 10 --company-size-max 15 --sort semantic --limit 10
+uv run relationship-substrate search-people --role-keywords "" --semantic-provider ollama --embedding-model mxbai-embed-large:latest --semantic-query "consultants or advisory firms in medcomms, pharma operations, supply chain, or business consulting" --company-size-min 10 --company-size-max 15 --sort semantic --limit 10
 uv run relationship-substrate export-operating-picture --from-db --limit 25
 ```
 
@@ -102,4 +102,4 @@ Person dossiers are factual inspection views for agents. `show-person --email` r
 
 Freshness is mechanical, not a relationship-health score. Operating-picture rows and person dossiers expose `freshness_state`, `days_since_last_interaction`, and `freshness_basis` from the last materialized interaction only: `recent` (0-30 days), `active` (31-120), `stale` (121-365), `dormant` (366+), or `unknown` when no interaction is materialized.
 
-Network search is the first executable North Star query. `search-people` searches Next Up curated contact evidence, filters by explicit constraints such as the number of known people at the same company inside the substrate, ranks by materialized relationship interaction count or embedding similarity, and returns source event provenance plus mechanical freshness. `embed-curated-contacts` populates `person.content_embedding` from curated contact context. The default real provider uses OpenAI embeddings via `OPENAI_API_KEY`; `--provider hash` exists only for local smoke tests. Network search does not yet perform external recent-news research or draft outreach.
+Network search is the first executable North Star query. `search-people` searches Next Up curated contact evidence, filters by explicit constraints such as the number of known people at the same company inside the substrate, ranks by materialized relationship interaction count or embedding similarity, and returns source event provenance plus mechanical freshness. `embed-curated-contacts` populates `person.content_embedding` from curated contact context. The default provider is local Ollama at `http://localhost:11434/api/embed`; `mxbai-embed-large:latest` is the current local default. OpenAI remains available through `--provider openai` and `OPENAI_API_KEY`; `--provider hash` exists only for local smoke tests. Network search does not yet perform external recent-news research or draft outreach.

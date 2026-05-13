@@ -6,7 +6,6 @@ from typing import Any
 
 import psycopg
 
-from relationship_substrate.embeddings import EMBEDDING_DIMENSIONS
 from relationship_substrate.freshness import relationship_freshness
 
 
@@ -57,8 +56,8 @@ def _relationship_sort_key(row: dict[str, Any]) -> tuple[int, str]:
 
 
 def _vector_literal(vector: list[float]) -> str:
-    if len(vector) != EMBEDDING_DIMENSIONS:
-        raise ValueError(f"semantic query embedding must have {EMBEDDING_DIMENSIONS} dimensions")
+    if not vector:
+        raise ValueError("semantic query embedding must not be empty")
     return "[" + ",".join(str(float(value)) for value in vector) + "]"
 
 
@@ -80,8 +79,15 @@ def _curated_contact_rows(
     semantic_select = "NULL::double precision AS semantic_distance"
     params: list[object] = []
     if semantic_query_embedding is not None:
-        semantic_select = "p.content_embedding <=> %s::vector AS semantic_distance"
-        params.append(_vector_literal(semantic_query_embedding))
+        semantic_select = """
+          CASE
+            WHEN p.content_embedding IS NOT NULL
+            AND vector_dims(p.content_embedding) = %s
+            THEN p.content_embedding <=> %s::vector
+            ELSE NULL
+          END AS semantic_distance
+        """
+        params.extend([len(semantic_query_embedding), _vector_literal(semantic_query_embedding)])
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
             cur.execute(

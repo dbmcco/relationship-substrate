@@ -438,7 +438,7 @@ def test_agent_cli_searches_people_by_role_and_company_size(
         "--company-size-max",
         "15",
         "--limit",
-        "10",
+        "1000",
     )
 
     result = next(

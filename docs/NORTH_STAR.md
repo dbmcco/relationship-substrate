@@ -48,7 +48,7 @@ The first North Star workflow is goal-conditioned network search:
 5. Research recent context about the selected person or organization with fresh external sources.
 6. Draft an email that cites the relationship context and current entry point without pretending enrichment is direct relationship evidence.
 
-The current executable slice is `search-people`: it searches Next Up curated contact evidence, counts known people per company inside the substrate, can rank by pgvector semantic similarity when embeddings are populated, can rank by materialized relationship strength, and returns provenance. It does not yet research recent news or write outreach.
+The current executable slice is `search-people`: it searches Next Up curated contact evidence, counts known people per company inside the substrate, can rank by pgvector semantic similarity when local Ollama embeddings are populated, can rank by materialized relationship strength, and returns provenance. It does not yet research recent news or write outreach.
 
 ## Non-Negotiable Principles
 

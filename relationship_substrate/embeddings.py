@@ -12,8 +12,10 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 
-EMBEDDING_DIMENSIONS = 1536
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+HASH_EMBEDDING_DIMENSIONS = 1536
+DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_OLLAMA_EMBEDDING_MODEL = "mxbai-embed-large:latest"
+DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434/api/embed"
 EMBEDDING_TEXT_VERSION = "curated-contact-v1"
 
 EmbedTexts = Callable[[list[str]], list[list[float]]]
@@ -24,8 +26,8 @@ def _clean_text(value: object) -> str:
 
 
 def _vector_literal(vector: list[float]) -> str:
-    if len(vector) != EMBEDDING_DIMENSIONS:
-        raise ValueError(f"embedding must have {EMBEDDING_DIMENSIONS} dimensions")
+    if not vector:
+        raise ValueError("embedding must not be empty")
     return "[" + ",".join(str(float(value)) for value in vector) + "]"
 
 
@@ -47,14 +49,50 @@ def hash_embed_texts(texts: list[str]) -> list[list[float]]:
         values: list[float] = []
         seed = text.encode("utf-8")
         counter = 0
-        while len(values) < EMBEDDING_DIMENSIONS:
+        while len(values) < HASH_EMBEDDING_DIMENSIONS:
             digest = hashlib.sha256(seed + counter.to_bytes(4, "big")).digest()
             for byte in digest:
                 values.append((byte / 127.5) - 1.0)
-                if len(values) == EMBEDDING_DIMENSIONS:
+                if len(values) == HASH_EMBEDDING_DIMENSIONS:
                     break
             counter += 1
         embeddings.append(values)
+    return embeddings
+
+
+def ollama_embed_texts(
+    texts: list[str],
+    *,
+    model: str | None = None,
+    endpoint: str | None = None,
+) -> list[list[float]]:
+    model = model or os.environ.get("RELATIONSHIP_SUBSTRATE_OLLAMA_EMBEDDING_MODEL", DEFAULT_OLLAMA_EMBEDDING_MODEL)
+    endpoint = endpoint or os.environ.get("RELATIONSHIP_SUBSTRATE_OLLAMA_EMBEDDING_ENDPOINT", DEFAULT_OLLAMA_ENDPOINT)
+    payload = json.dumps(
+        {
+            "model": model,
+            "input": texts,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            raw = response.read()
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Ollama embeddings request failed: {exc}") from exc
+    data = json.loads(raw)
+    if data.get("error"):
+        raise RuntimeError(f"Ollama embeddings request failed: {data['error']}")
+    embeddings = data.get("embeddings")
+    if embeddings is None and data.get("embedding") is not None:
+        embeddings = [data["embedding"]]
+    if not isinstance(embeddings, list):
+        raise RuntimeError("Ollama embeddings response did not include embeddings")
     return embeddings
 
 
@@ -68,7 +106,7 @@ def openai_embed_texts(
     api_key = api_key or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for OpenAI embeddings")
-    model = model or os.environ.get("RELATIONSHIP_SUBSTRATE_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
+    model = model or os.environ.get("RELATIONSHIP_SUBSTRATE_EMBEDDING_MODEL", DEFAULT_OPENAI_EMBEDDING_MODEL)
     payload = json.dumps(
         {
             "model": model,

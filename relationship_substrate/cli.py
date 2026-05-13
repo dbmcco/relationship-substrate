@@ -12,9 +12,11 @@ from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
 from relationship_substrate.dossiers import get_person_dossier
 from relationship_substrate.embeddings import (
-    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_OLLAMA_EMBEDDING_MODEL,
+    DEFAULT_OPENAI_EMBEDDING_MODEL,
     embed_curated_contacts,
     hash_embed_texts,
+    ollama_embed_texts,
     openai_embed_texts,
 )
 from relationship_substrate.identity import (
@@ -83,13 +85,13 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--company-size-min", type=int, default=None)
     search.add_argument("--company-size-max", type=int, default=None)
     search.add_argument("--semantic-query", default=None)
-    search.add_argument("--semantic-provider", choices=["openai", "hash"], default="openai")
-    search.add_argument("--embedding-model", default=DEFAULT_EMBEDDING_MODEL)
+    search.add_argument("--semantic-provider", choices=["ollama", "openai", "hash"], default="ollama")
+    search.add_argument("--embedding-model", default=None)
     search.add_argument("--sort", choices=["relationship", "semantic"], default=None)
     search.add_argument("--limit", type=int, default=25)
     embed = subparsers.add_parser("embed-curated-contacts")
-    embed.add_argument("--provider", choices=["openai", "hash"], default="openai")
-    embed.add_argument("--model", default=DEFAULT_EMBEDDING_MODEL)
+    embed.add_argument("--provider", choices=["ollama", "openai", "hash"], default="ollama")
+    embed.add_argument("--model", default=None)
     embed.add_argument("--limit", type=int, default=None)
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
@@ -127,10 +129,23 @@ def _comma_separated(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
-def _embedding_function(provider: str, *, model: str):
+def _embedding_model(provider: str, model: str | None) -> str:
+    if model:
+        return model
+    if provider == "openai":
+        return DEFAULT_OPENAI_EMBEDDING_MODEL
+    if provider == "ollama":
+        return DEFAULT_OLLAMA_EMBEDDING_MODEL
+    return "hash"
+
+
+def _embedding_function(provider: str, *, model: str | None):
     if provider == "hash":
         return hash_embed_texts
-    return lambda texts: openai_embed_texts(texts, model=model)
+    resolved_model = _embedding_model(provider, model)
+    if provider == "ollama":
+        return lambda texts: ollama_embed_texts(texts, model=resolved_model)
+    return lambda texts: openai_embed_texts(texts, model=resolved_model)
 
 
 def ingest_next_up(database_url: str, path: Path) -> dict[str, int | str]:
@@ -447,7 +462,7 @@ def main() -> int:
                 settings.database_url,
                 embed_texts=_embedding_function(args.provider, model=args.model),
                 provider_name=args.provider,
-                model=args.model,
+                model=_embedding_model(args.provider, args.model),
                 limit=args.limit,
             )
         )
@@ -476,7 +491,9 @@ def main() -> int:
                     "company_size_max": args.company_size_max,
                     "semantic_query": args.semantic_query,
                     "semantic_provider": args.semantic_provider if args.semantic_query else None,
-                    "embedding_model": args.embedding_model if args.semantic_query else None,
+                    "embedding_model": _embedding_model(args.semantic_provider, args.embedding_model)
+                    if args.semantic_query
+                    else None,
                     "sort": args.sort,
                     "limit": args.limit,
                 },
