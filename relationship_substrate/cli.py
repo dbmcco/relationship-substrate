@@ -38,7 +38,11 @@ from relationship_substrate.organizations import (
     upsert_organization_enrichment,
 )
 from relationship_substrate.operations import run_network_pipeline
-from relationship_substrate.outreach import prepare_outreach_proposal_packet, validate_outreach_proposal
+from relationship_substrate.outreach import (
+    prepare_history_backed_outreach_proposal_packet,
+    prepare_outreach_proposal_packet,
+    validate_outreach_proposal,
+)
 from relationship_substrate.relationship_intelligence import (
     persist_relationship_state,
     prepare_relationship_intelligence_packet,
@@ -110,6 +114,16 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_outreach.add_argument("--research-context", default=None)
     prepare_outreach.add_argument("--model-proposal", default=None)
     prepare_outreach.add_argument("--evidence-limit", type=int, default=10)
+    prepare_history_outreach = subparsers.add_parser("prepare-history-backed-outreach-proposal")
+    prepare_history_outreach.add_argument("--actual-employee-count-min", type=int, default=None)
+    prepare_history_outreach.add_argument("--actual-employee-count-max", type=int, default=None)
+    prepare_history_outreach.add_argument("--consultant-count-min", type=int, default=None)
+    prepare_history_outreach.add_argument("--consultant-count-max", type=int, default=None)
+    prepare_history_outreach.add_argument("--limit", type=int, default=10)
+    prepare_history_outreach.add_argument("--research-context", default=None)
+    prepare_history_outreach.add_argument("--model-proposal", default=None)
+    prepare_history_outreach.add_argument("--evidence-limit", type=int, default=10)
+    prepare_history_outreach.add_argument("--prior-state-limit", type=int, default=3)
     persist_state = subparsers.add_parser("persist-relationship-state")
     persist_state.add_argument("--email", required=True)
     persist_state.add_argument("--proposal", required=True)
@@ -614,6 +628,30 @@ def main() -> int:
             emails=args.email,
             research_context=research_context,
             evidence_limit=args.evidence_limit,
+        )
+        if args.model_proposal:
+            proposal = json.loads(Path(args.model_proposal).read_text(encoding="utf-8"))
+            packet["model_proposal_validation"] = {
+                "valid": True,
+                "proposal": validate_outreach_proposal(packet, proposal),
+            }
+        _print_json(packet)
+        return 0
+    if args.command == "prepare-history-backed-outreach-proposal":
+        run_migrations(settings.database_url)
+        research_context = None
+        if args.research_context:
+            research_context = json.loads(Path(args.research_context).read_text(encoding="utf-8"))
+        packet = prepare_history_backed_outreach_proposal_packet(
+            settings.database_url,
+            actual_employee_count_min=args.actual_employee_count_min,
+            actual_employee_count_max=args.actual_employee_count_max,
+            consultant_count_min=args.consultant_count_min,
+            consultant_count_max=args.consultant_count_max,
+            limit=args.limit,
+            research_context=research_context,
+            evidence_limit=args.evidence_limit,
+            prior_state_limit=args.prior_state_limit,
         )
         if args.model_proposal:
             proposal = json.loads(Path(args.model_proposal).read_text(encoding="utf-8"))

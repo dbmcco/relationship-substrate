@@ -11,7 +11,9 @@ from relationship_substrate.cli import main
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
 from relationship_substrate.materialize import materialize_exact_emails, materialize_msgvault_correspondence
+from relationship_substrate.organizations import upsert_organization_enrichment
 from relationship_substrate.outreach import (
+    prepare_history_backed_outreach_proposal_packet,
     prepare_outreach_proposal_packet,
     validate_outreach_proposal,
 )
@@ -225,3 +227,110 @@ def test_prepare_outreach_proposal_cli_reads_research_context(database_url, tmp_
 
     assert packet["people"][0]["search_hit"]["email"] == email
     assert packet["research_context"]["sources"][0]["id"] == "cli-research"
+
+
+def test_prepare_history_backed_outreach_packet_uses_history_search_and_tone_state(
+    database_url,
+):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    domain = f"history-outreach-{run_id}.example"
+    email = f"partner@{domain}"
+    evidence_ref_id = _relationship_evidence(database_url, email=email)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_consulting_firm",
+        employee_count_min=12,
+        employee_count_max=12,
+        employee_count_label="test sourced team count",
+        consultant_count_estimate=12,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+
+    packet = prepare_history_backed_outreach_proposal_packet(
+        database_url,
+        actual_employee_count_min=12,
+        actual_employee_count_max=12,
+        consultant_count_min=12,
+        consultant_count_max=12,
+        limit=5,
+        research_context={"sources": [{"id": "current-news", "url": "https://example.com/news"}]},
+        evidence_limit=3,
+    )
+
+    person_packet = next(person for person in packet["people"] if person["email"] == email)
+    assert packet["proposal_stage"] == "history_backed_research_outreach"
+    assert person_packet["search_hit"]["domain"] == domain
+    assert person_packet["relationship_intelligence"]["evidence"][0]["id"] == evidence_ref_id
+    assert person_packet["relationship_tone_tenor"]["dossier_counts"]["evidence_refs"] >= 1
+    assert packet["relationship_tone_model_contract"]["owner"] == "model"
+
+    validated = validate_outreach_proposal(
+        packet,
+        {
+            "person_email": email,
+            "priority": "model-owned",
+            "relevance_rationale": "Model rationale.",
+            "best_angle": "Model angle.",
+            "draft_email": {"subject": "Subject", "body": "Body"},
+            "next_action": "Model action.",
+            "cited_evidence_refs": [evidence_ref_id],
+            "cited_research_refs": ["current-news"],
+        },
+    )
+    assert validated["person_email"] == email
+
+
+def test_prepare_history_backed_outreach_cli_reads_research_context(
+    database_url,
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    domain = f"history-cli-{run_id}.example"
+    email = f"partner@{domain}"
+    _relationship_evidence(database_url, email=email)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_consulting_firm",
+        employee_count_min=11,
+        employee_count_max=11,
+        consultant_count_estimate=11,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+    research_path = tmp_path / "research.json"
+    research_path.write_text(
+        json.dumps({"sources": [{"id": "cli-current-news", "url": "https://example.com/current"}]}),
+        encoding="utf-8",
+    )
+
+    packet = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "prepare-history-backed-outreach-proposal",
+        "--actual-employee-count-min",
+        "11",
+        "--actual-employee-count-max",
+        "11",
+        "--consultant-count-min",
+        "11",
+        "--consultant-count-max",
+        "11",
+        "--limit",
+        "5",
+        "--research-context",
+        str(research_path),
+        "--evidence-limit",
+        "3",
+    )
+
+    assert packet["research_context"]["sources"][0]["id"] == "cli-current-news"
+    assert any(person["email"] == email for person in packet["people"])

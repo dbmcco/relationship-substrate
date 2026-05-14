@@ -5,8 +5,11 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from relationship_substrate.dossiers import get_person_dossier
-from relationship_substrate.relationship_intelligence import prepare_relationship_intelligence_packet
-from relationship_substrate.search import search_people
+from relationship_substrate.relationship_intelligence import (
+    prepare_relationship_intelligence_packet,
+    prepare_relationship_tone_tenor_analysis_packet,
+)
+from relationship_substrate.search import search_history_backed_people, search_people
 
 
 class OutreachProposal(BaseModel):
@@ -101,6 +104,66 @@ def prepare_outreach_proposal_packet(
         "people": people,
         "research_context": research_context if research_context is not None else {},
         "model_contract": _model_contract(),
+    }
+
+
+def prepare_history_backed_outreach_proposal_packet(
+    database_url: str,
+    *,
+    actual_employee_count_min: int | None = None,
+    actual_employee_count_max: int | None = None,
+    consultant_count_min: int | None = None,
+    consultant_count_max: int | None = None,
+    limit: int = 10,
+    research_context: Any | None = None,
+    evidence_limit: int = 10,
+    prior_state_limit: int = 3,
+) -> dict[str, Any]:
+    search_hits = search_history_backed_people(
+        database_url,
+        actual_employee_count_min=actual_employee_count_min,
+        actual_employee_count_max=actual_employee_count_max,
+        consultant_count_min=consultant_count_min,
+        consultant_count_max=consultant_count_max,
+        limit=limit,
+    )
+    emails = [hit["email"] for hit in search_hits]
+    tone_packet = prepare_relationship_tone_tenor_analysis_packet(
+        database_url,
+        emails=emails,
+        evidence_limit=evidence_limit,
+        prior_state_limit=prior_state_limit,
+    )
+    tone_by_email = {person["email"]: person for person in tone_packet["people"]}
+    people = [
+        {
+            "email": hit["email"],
+            "search_hit": hit,
+            "relationship_intelligence": tone_by_email[hit["email"]]["relationship_intelligence"],
+            "relationship_tone_tenor": {
+                "person": tone_by_email[hit["email"]]["person"],
+                "relationship_edge": tone_by_email[hit["email"]]["relationship_edge"],
+                "contact_channels": tone_by_email[hit["email"]]["contact_channels"],
+                "dossier_counts": tone_by_email[hit["email"]]["dossier_counts"],
+                "prior_tone_tenor_states": tone_by_email[hit["email"]]["prior_tone_tenor_states"],
+            },
+        }
+        for hit in search_hits
+    ]
+    return {
+        "proposal_stage": "history_backed_research_outreach",
+        "query": {
+            "actual_employee_count_min": actual_employee_count_min,
+            "actual_employee_count_max": actual_employee_count_max,
+            "consultant_count_min": consultant_count_min,
+            "consultant_count_max": consultant_count_max,
+            "limit": limit,
+        },
+        "count": len(people),
+        "people": people,
+        "research_context": research_context if research_context is not None else {},
+        "model_contract": _model_contract(),
+        "relationship_tone_model_contract": tone_packet["model_contract"],
     }
 
 
