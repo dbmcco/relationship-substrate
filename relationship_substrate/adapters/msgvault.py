@@ -21,9 +21,11 @@ def parse_query_output(payload: list[dict[str, Any]], *, key_name: str) -> list[
     return rows
 
 
-def parse_msgvault_json_output(output: str) -> Any:
+def parse_msgvault_json_output(output: str, *, allow_empty_result: bool = False) -> Any:
     start_candidates = [index for index in (output.find("["), output.find("{")) if index >= 0]
     if not start_candidates:
+        if allow_empty_result and output.strip() in {"", "No messages found."}:
+            return []
         raise ValueError("msgvault output did not contain JSON")
     start = min(start_candidates)
     end = max(output.rfind("]"), output.rfind("}"))
@@ -65,9 +67,9 @@ class MsgvaultAdapter:
     def build_search_command(self, query: str, *, limit: int = 50) -> list[str]:
         return [*self._base_command(), "search", query, "--json", "--limit", str(int(limit))]
 
-    def _run_json(self, command: list[str]) -> Any:
+    def _run_json(self, command: list[str], *, allow_empty_result: bool = False) -> Any:
         completed = subprocess.run(command, check=True, capture_output=True, text=True)
-        return parse_msgvault_json_output(completed.stdout)
+        return parse_msgvault_json_output(completed.stdout, allow_empty_result=allow_empty_result)
 
     def top_sender_candidates(self, limit: int = 100) -> list[dict[str, Any]]:
         return parse_query_output(self._run_json(self.build_sender_command(limit)), key_name="email")
@@ -76,7 +78,7 @@ class MsgvaultAdapter:
         return parse_query_output(self._run_json(self.build_domain_command(limit)), key_name="domain")
 
     def search_messages(self, query: str, *, limit: int = 50) -> list[dict[str, Any]]:
-        payload = self._run_json(self.build_search_command(query, limit=limit))
+        payload = self._run_json(self.build_search_command(query, limit=limit), allow_empty_result=True)
         if not isinstance(payload, list):
             raise ValueError("msgvault search returned non-list JSON")
         return payload
