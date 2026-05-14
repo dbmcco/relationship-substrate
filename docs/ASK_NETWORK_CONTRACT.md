@@ -366,6 +366,31 @@ The stored record includes:
 
 The stored summary intentionally omits raw relationship evidence bodies and full relationship-intelligence payloads. It keeps references so later feedback can point to the exact packet version without duplicating the evidence ledger.
 
+## Feedback State
+
+Feedback is recorded against saved packet versions:
+
+```text
+relationship-substrate record-network-feedback \
+  --packet-id <network_packet.id> \
+  --person-email person@example.com \
+  --kind recommendation_review \
+  --feedback feedback.json
+
+relationship-substrate list-network-feedback --packet-id <network_packet.id>
+```
+
+The feedback JSON may include fields such as:
+
+- `useful`
+- `edited_draft`
+- `rejected_premise`
+- `preferred_angle`
+- `next_action_status`
+- `caution_note`
+
+Code stores feedback as durable, model-readable state and validates only that the referenced packet exists, the optional person belongs to that packet, and the feedback object is non-empty. Code must not convert feedback into hidden ranking weights or hardcoded preference rules.
+
 ## Research Context
 
 V1 can accept the existing loose research JSON as `research_context`.

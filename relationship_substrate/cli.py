@@ -36,6 +36,7 @@ from relationship_substrate.network_ask import (
     prepare_ask_network_packet,
     validate_ask_network_recommendations,
 )
+from relationship_substrate.network_feedback import list_network_feedback, record_network_feedback
 from relationship_substrate.network_packets import get_network_packet, persist_ask_network_packet
 from relationship_substrate.organizations import (
     history_backed_organization_worklist,
@@ -216,6 +217,15 @@ def build_parser() -> argparse.ArgumentParser:
     research_context.add_argument("--limit", type=int, default=5)
     show_network_packet = subparsers.add_parser("show-network-packet")
     show_network_packet.add_argument("--id", required=True)
+    record_feedback = subparsers.add_parser("record-network-feedback")
+    record_feedback.add_argument("--packet-id", required=True)
+    record_feedback.add_argument("--person-email", default=None)
+    record_feedback.add_argument("--kind", required=True)
+    record_feedback.add_argument("--feedback", required=True)
+    list_feedback = subparsers.add_parser("list-network-feedback")
+    list_feedback.add_argument("--packet-id", default=None)
+    list_feedback.add_argument("--person-email", default=None)
+    list_feedback.add_argument("--limit", type=int, default=50)
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -897,6 +907,29 @@ def main() -> int:
     if args.command == "show-network-packet":
         run_migrations(settings.database_url)
         _print_json(get_network_packet(settings.database_url, packet_id=args.id))
+        return 0
+    if args.command == "record-network-feedback":
+        run_migrations(settings.database_url)
+        feedback = json.loads(Path(args.feedback).read_text(encoding="utf-8"))
+        _print_json(
+            record_network_feedback(
+                settings.database_url,
+                packet_id=args.packet_id,
+                person_email=args.person_email,
+                feedback_kind=args.kind,
+                feedback=feedback,
+            )
+        )
+        return 0
+    if args.command == "list-network-feedback":
+        run_migrations(settings.database_url)
+        rows = list_network_feedback(
+            settings.database_url,
+            packet_id=args.packet_id,
+            person_email=args.person_email,
+            limit=args.limit,
+        )
+        _print_json({"count": len(rows), "feedback": rows})
         return 0
     if args.command == "search-people":
         semantic_query_embedding = None
