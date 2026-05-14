@@ -255,7 +255,7 @@ def test_prepare_history_backed_outreach_packet_uses_history_search_and_tone_sta
         actual_employee_count_max=12,
         consultant_count_min=12,
         consultant_count_max=12,
-        limit=5,
+        limit=1000,
         research_context={"sources": [{"id": "current-news", "url": "https://example.com/news"}]},
         evidence_limit=3,
     )
@@ -325,7 +325,7 @@ def test_prepare_history_backed_outreach_cli_reads_research_context(
         "--consultant-count-max",
         "11",
         "--limit",
-        "5",
+        "1000",
         "--research-context",
         str(research_path),
         "--evidence-limit",

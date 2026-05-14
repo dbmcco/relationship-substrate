@@ -31,6 +31,7 @@ from relationship_substrate.materialize import (
     materialize_msgvault_correspondence,
     materialize_msgvault_senders,
 )
+from relationship_substrate.network_ask import prepare_ask_network_packet
 from relationship_substrate.organizations import (
     history_backed_organization_worklist,
     import_organization_enrichments,
@@ -124,6 +125,16 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_history_outreach.add_argument("--model-proposal", default=None)
     prepare_history_outreach.add_argument("--evidence-limit", type=int, default=10)
     prepare_history_outreach.add_argument("--prior-state-limit", type=int, default=3)
+    ask_network = subparsers.add_parser("ask-network")
+    ask_network.add_argument("--goal", required=True)
+    ask_network.add_argument("--actual-employee-count-min", type=int, default=None)
+    ask_network.add_argument("--actual-employee-count-max", type=int, default=None)
+    ask_network.add_argument("--consultant-count-min", type=int, default=None)
+    ask_network.add_argument("--consultant-count-max", type=int, default=None)
+    ask_network.add_argument("--limit", type=int, default=10)
+    ask_network.add_argument("--research-context", default=None)
+    ask_network.add_argument("--evidence-limit", type=int, default=10)
+    ask_network.add_argument("--prior-state-limit", type=int, default=3)
     persist_state = subparsers.add_parser("persist-relationship-state")
     persist_state.add_argument("--email", required=True)
     persist_state.add_argument("--proposal", required=True)
@@ -660,6 +671,26 @@ def main() -> int:
                 "proposal": validate_outreach_proposal(packet, proposal),
             }
         _print_json(packet)
+        return 0
+    if args.command == "ask-network":
+        run_migrations(settings.database_url)
+        research_context = None
+        if args.research_context:
+            research_context = json.loads(Path(args.research_context).read_text(encoding="utf-8"))
+        _print_json(
+            prepare_ask_network_packet(
+                settings.database_url,
+                goal=args.goal,
+                actual_employee_count_min=args.actual_employee_count_min,
+                actual_employee_count_max=args.actual_employee_count_max,
+                consultant_count_min=args.consultant_count_min,
+                consultant_count_max=args.consultant_count_max,
+                limit=args.limit,
+                research_context=research_context,
+                evidence_limit=args.evidence_limit,
+                prior_state_limit=args.prior_state_limit,
+            )
+        )
         return 0
     if args.command == "persist-relationship-state":
         run_migrations(settings.database_url)
