@@ -53,6 +53,7 @@ from relationship_substrate.relationship_intelligence import (
     prepare_relationship_intelligence_packet,
     prepare_relationship_tone_tenor_analysis_packet,
 )
+from relationship_substrate.research import research_context_from_snapshots, upsert_research_snapshot
 from relationship_substrate.repositories import (
     identity_candidate_counts,
     operating_picture_rows,
@@ -137,6 +138,9 @@ def build_parser() -> argparse.ArgumentParser:
     ask_network.add_argument("--consultant-count-max", type=int, default=None)
     ask_network.add_argument("--limit", type=int, default=10)
     ask_network.add_argument("--research-context", default=None)
+    ask_network.add_argument("--research-snapshot-subject", default=None)
+    ask_network.add_argument("--research-snapshot-subject-type", default=None)
+    ask_network.add_argument("--research-snapshot-limit", type=int, default=5)
     ask_network.add_argument("--model-proposal", default=None)
     ask_network.add_argument("--evidence-limit", type=int, default=10)
     ask_network.add_argument("--prior-state-limit", type=int, default=3)
@@ -150,6 +154,9 @@ def build_parser() -> argparse.ArgumentParser:
     eval_ask_network.add_argument("--consultant-count-max", type=int, default=None)
     eval_ask_network.add_argument("--limit", type=int, default=10)
     eval_ask_network.add_argument("--research-context", default=None)
+    eval_ask_network.add_argument("--research-snapshot-subject", default=None)
+    eval_ask_network.add_argument("--research-snapshot-subject-type", default=None)
+    eval_ask_network.add_argument("--research-snapshot-limit", type=int, default=5)
     eval_ask_network.add_argument("--model-proposal", default=None)
     eval_ask_network.add_argument("--evidence-limit", type=int, default=10)
     eval_ask_network.add_argument("--prior-state-limit", type=int, default=3)
@@ -198,6 +205,12 @@ def build_parser() -> argparse.ArgumentParser:
     org_history_worklist.add_argument("--missing-only", action="store_true")
     org_import = subparsers.add_parser("import-organization-enrichments")
     org_import.add_argument("--path", required=True)
+    research_import = subparsers.add_parser("import-research-snapshot")
+    research_import.add_argument("--path", required=True)
+    research_context = subparsers.add_parser("export-research-context")
+    research_context.add_argument("--subject", required=True)
+    research_context.add_argument("--subject-type", default=None)
+    research_context.add_argument("--limit", type=int, default=5)
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -697,6 +710,13 @@ def main() -> int:
         research_context = None
         if args.research_context:
             research_context = json.loads(Path(args.research_context).read_text(encoding="utf-8"))
+        elif args.research_snapshot_subject:
+            research_context = research_context_from_snapshots(
+                settings.database_url,
+                subject=args.research_snapshot_subject,
+                subject_type=args.research_snapshot_subject_type,
+                limit=args.research_snapshot_limit,
+            )
         refresh_missing_evidence = None
         if args.refresh_missing_evidence:
             def refresh_missing_evidence(*, email: str, limit: int) -> dict[str, object]:
@@ -736,6 +756,13 @@ def main() -> int:
         research_context = None
         if args.research_context:
             research_context = json.loads(Path(args.research_context).read_text(encoding="utf-8"))
+        elif args.research_snapshot_subject:
+            research_context = research_context_from_snapshots(
+                settings.database_url,
+                subject=args.research_snapshot_subject,
+                subject_type=args.research_snapshot_subject_type,
+                limit=args.research_snapshot_limit,
+            )
         refresh_missing_evidence = None
         if args.refresh_missing_evidence:
             def refresh_missing_evidence(*, email: str, limit: int) -> dict[str, object]:
@@ -827,6 +854,36 @@ def main() -> int:
         if not isinstance(records, list):
             records = [records]
         _print_json(import_organization_enrichments(settings.database_url, records))
+        return 0
+    if args.command == "import-research-snapshot":
+        run_migrations(settings.database_url)
+        records = json.loads(Path(args.path).read_text(encoding="utf-8"))
+        if not isinstance(records, list):
+            records = [records]
+        snapshots = [
+            upsert_research_snapshot(
+                settings.database_url,
+                subject_type=record["subject_type"],
+                subject=record["subject"],
+                summary=record["summary"],
+                confidence=record["confidence"],
+                sources=record.get("sources", []),
+                metadata=record.get("metadata", {}),
+            )
+            for record in records
+        ]
+        _print_json({"count": len(snapshots), "snapshots": snapshots})
+        return 0
+    if args.command == "export-research-context":
+        run_migrations(settings.database_url)
+        _print_json(
+            research_context_from_snapshots(
+                settings.database_url,
+                subject=args.subject,
+                subject_type=args.subject_type,
+                limit=args.limit,
+            )
+        )
         return 0
     if args.command == "search-people":
         semantic_query_embedding = None

@@ -36,6 +36,7 @@ relationship-substrate ask-network \
   --refresh-missing-evidence \
   --refresh-evidence-limit 50 \
   --research-context path/to/research.json \
+  --research-snapshot-subject "small consultancy query" \
   --model-proposal path/to/model-recommendations.json
 ```
 
@@ -350,7 +351,7 @@ The list order is model-owned ranking. Code preserves that order and validates o
 
 V1 can accept the existing loose research JSON as `research_context`.
 
-Required future shape for persisted snapshots:
+Persisted snapshots use this shape:
 
 ```json
 {
@@ -376,7 +377,15 @@ Required future shape for persisted snapshots:
 }
 ```
 
-Until research snapshots are persisted, the packet must label research context as an input artifact, not durable substrate truth.
+`ask-network` can load persisted snapshots directly:
+
+```text
+relationship-substrate ask-network \
+  --goal "Give me five people who are consultants, who are at firms that have around ten people on staff." \
+  --research-snapshot-subject "small consultancy query"
+```
+
+Snapshot-backed research context is emitted under `research_context.snapshots`, with flattened citable sources under `research_context.sources`. Relationship evidence refs and research refs remain separate citation namespaces.
 
 ## Background Refresh Contract
 
