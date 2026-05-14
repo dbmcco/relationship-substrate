@@ -37,6 +37,7 @@ from relationship_substrate.organizations import (
     organization_enrichment_worklist,
     upsert_organization_enrichment,
 )
+from relationship_substrate.outreach import prepare_outreach_proposal_packet, validate_outreach_proposal
 from relationship_substrate.relationship_intelligence import (
     persist_relationship_state,
     prepare_relationship_intelligence_packet,
@@ -98,6 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_intelligence = subparsers.add_parser("prepare-relationship-intelligence")
     prepare_intelligence.add_argument("--email", required=True)
     prepare_intelligence.add_argument("--evidence-limit", type=int, default=10)
+    prepare_outreach = subparsers.add_parser("prepare-outreach-proposal")
+    prepare_outreach.add_argument("--email", action="append", required=True)
+    prepare_outreach.add_argument("--research-context", default=None)
+    prepare_outreach.add_argument("--model-proposal", default=None)
+    prepare_outreach.add_argument("--evidence-limit", type=int, default=10)
     persist_state = subparsers.add_parser("persist-relationship-state")
     persist_state.add_argument("--email", required=True)
     persist_state.add_argument("--proposal", required=True)
@@ -558,6 +564,25 @@ def main() -> int:
                 evidence_limit=args.evidence_limit,
             )
         )
+        return 0
+    if args.command == "prepare-outreach-proposal":
+        run_migrations(settings.database_url)
+        research_context = None
+        if args.research_context:
+            research_context = json.loads(Path(args.research_context).read_text(encoding="utf-8"))
+        packet = prepare_outreach_proposal_packet(
+            settings.database_url,
+            emails=args.email,
+            research_context=research_context,
+            evidence_limit=args.evidence_limit,
+        )
+        if args.model_proposal:
+            proposal = json.loads(Path(args.model_proposal).read_text(encoding="utf-8"))
+            packet["model_proposal_validation"] = {
+                "valid": True,
+                "proposal": validate_outreach_proposal(packet, proposal),
+            }
+        _print_json(packet)
         return 0
     if args.command == "persist-relationship-state":
         run_migrations(settings.database_url)
