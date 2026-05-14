@@ -37,6 +37,7 @@ from relationship_substrate.organizations import (
     organization_enrichment_worklist,
     upsert_organization_enrichment,
 )
+from relationship_substrate.operations import run_network_pipeline
 from relationship_substrate.outreach import prepare_outreach_proposal_packet, validate_outreach_proposal
 from relationship_substrate.relationship_intelligence import (
     persist_relationship_state,
@@ -150,6 +151,22 @@ def build_parser() -> argparse.ArgumentParser:
     eval_local.add_argument("--output-dir", default="output/eval")
     eval_local.add_argument("--limit", type=int, default=25)
     eval_local.add_argument("--skip-msgvault", action="store_true")
+    pipeline = subparsers.add_parser("run-network-pipeline")
+    pipeline.add_argument("--next-up-path", action="append", required=True)
+    pipeline.add_argument("--calendar-path", action="append", default=[])
+    pipeline.add_argument("--output-dir", default="output/ops")
+    pipeline.add_argument("--no-create-database", action="store_true")
+    pipeline.add_argument("--sender-limit", type=int, default=500)
+    pipeline.add_argument("--correspondence-from-senders", type=int, default=25)
+    pipeline.add_argument("--correspondence-message-limit", type=int, default=50)
+    pipeline.add_argument("--skip-msgvault", action="store_true")
+    pipeline.add_argument("--skip-embeddings", action="store_true")
+    pipeline.add_argument("--embed-provider", choices=["ollama", "openai", "hash"], default="ollama")
+    pipeline.add_argument("--embedding-model", default=None)
+    pipeline.add_argument("--embed-limit", type=int, default=500)
+    pipeline.add_argument("--organization-worklist-limit", type=int, default=100)
+    pipeline.add_argument("--north-star-limit", type=int, default=25)
+    pipeline.add_argument("--north-star-semantic-query", default=None)
     return parser
 
 
@@ -629,6 +646,8 @@ def main() -> int:
             settings.database_url,
             limit=args.limit,
             skipped_domains=set(settings.skipped_sender_domains),
+            skipped_system_localparts=set(settings.skipped_system_localparts),
+            skipped_system_prefixes=set(settings.skipped_system_prefixes),
             missing_enrichment_only=args.missing_only,
         )
         _print_json({"count": len(companies), "companies": companies})
@@ -700,6 +719,35 @@ def main() -> int:
                 output_dir=Path(args.output_dir),
                 limit=args.limit,
                 skip_msgvault=args.skip_msgvault,
+            )
+        )
+        return 0
+    if args.command == "run-network-pipeline":
+        embed_texts = None
+        embed_model = None
+        if not args.skip_embeddings:
+            embed_model = _embedding_model(args.embed_provider, args.embedding_model)
+            embed_texts = _embedding_function(args.embed_provider, model=args.embedding_model)
+        _print_json(
+            run_network_pipeline(
+                settings,
+                next_up_paths=[Path(path) for path in args.next_up_path],
+                calendar_paths=[Path(path) for path in args.calendar_path],
+                output_dir=Path(args.output_dir),
+                create_database=not args.no_create_database,
+                sender_limit=args.sender_limit,
+                correspondence_from_senders=args.correspondence_from_senders,
+                correspondence_message_limit=args.correspondence_message_limit,
+                skip_msgvault=args.skip_msgvault,
+                skip_embeddings=args.skip_embeddings,
+                embed_texts=embed_texts,
+                embed_provider=args.embed_provider,
+                embed_model=embed_model,
+                embed_limit=args.embed_limit,
+                organization_worklist_limit=args.organization_worklist_limit,
+                north_star_limit=args.north_star_limit,
+                north_star_semantic_query=args.north_star_semantic_query
+                or "consulting background in medcoms medical communications business consulting supply chain pharma small consulting team",
             )
         )
         return 0

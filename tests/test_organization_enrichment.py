@@ -230,6 +230,59 @@ def test_history_backed_organization_worklist_excludes_known_non_target_domains_
     assert "mcco.us" not in domains
 
 
+def test_history_backed_organization_worklist_filters_system_senders_and_dedupes_people(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    domain = f"dedupe-{run_id}.example"
+    retail_domain = f"retail-{run_id}.example"
+    email = f"person@{domain}"
+    for index in range(2):
+        upsert_source_event(
+            database_url,
+            SourceEventIn(
+                source_name="next_up",
+                source_event_type="curated_contact",
+                source_event_key=f"org-enrichment-duplicate:{run_id}:{index}",
+                source_payload={
+                    "email": email,
+                    "first_name": "Duplicate",
+                    "last_name": "Person",
+                    "title": "Strategy Consultant",
+                    "company": f"Dedupe Co {run_id}",
+                },
+                source_posture=SourcePosture.CURATED_EXPORT,
+                provenance_status="test_curated_export",
+                trust_role="identity/context seed",
+            ),
+        )
+    materialize_exact_emails(database_url, skipped_domains={"intempio.com"})
+    ingest_msgvault_sender_rows(
+        database_url,
+        [
+            {"email": email, "display_name": "Duplicate Person", "message_count": 20},
+            {
+                "email": f"shipment-tracking@{retail_domain}",
+                "display_name": "Shipment Tracking",
+                "message_count": 200,
+            },
+        ],
+        self_aliases=set(),
+        skipped_domains=set(),
+    )
+    materialize_msgvault_senders(database_url)
+
+    rows = history_backed_organization_worklist(
+        database_url,
+        limit=1000,
+        skipped_system_localparts=set(),
+        skipped_system_prefixes={"shipment"},
+    )
+
+    current = next(row for row in rows if row["domain"] == domain)
+    assert [person["email"] for person in current["strongest_people"]] == [email]
+    assert all(row["domain"] != retail_domain for row in rows)
+
+
 def test_history_backed_organization_worklist_can_return_only_missing_enrichment(database_url):
     run_migrations(database_url)
     with psycopg.connect(database_url) as conn:

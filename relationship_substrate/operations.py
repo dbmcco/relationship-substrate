@@ -1,0 +1,453 @@
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Callable
+from urllib.parse import urlparse, urlunparse
+
+import psycopg
+from psycopg import sql
+
+from relationship_substrate.adapters.calendar import iter_calendar_json_events
+from relationship_substrate.adapters.msgvault import MsgvaultAdapter
+from relationship_substrate.adapters.next_up import iter_next_up_events
+from relationship_substrate.config import Settings
+from relationship_substrate.contracts import SourceEventIn, SourcePosture
+from relationship_substrate.db import run_migrations
+from relationship_substrate.embeddings import embed_curated_contacts
+from relationship_substrate.identity import generate_identity_candidates
+from relationship_substrate.materialize import (
+    materialize_calendar_events,
+    materialize_exact_emails,
+    materialize_msgvault_correspondence,
+    materialize_msgvault_senders,
+)
+from relationship_substrate.organizations import history_backed_organization_worklist
+from relationship_substrate.repositories import (
+    identity_candidate_counts,
+    operating_picture_rows,
+    substrate_counts,
+    upsert_evidence_ref,
+    upsert_source_event,
+)
+from relationship_substrate.search import DEFAULT_ROLE_KEYWORDS, search_people
+
+
+EmbedTexts = Callable[[list[str]], list[list[float]]]
+
+DEFAULT_NORTH_STAR_SEMANTIC_QUERY = (
+    "consulting background in medcoms medical communications business consulting "
+    "supply chain pharma small consulting team"
+)
+
+
+def _json_default(value: object) -> str:
+    return str(value)
+
+
+def _write_json(path: Path, payload: object) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=_json_default) + "\n")
+    return str(path)
+
+
+def _email_domain(email: str) -> str:
+    return email.rsplit("@", 1)[-1] if "@" in email else ""
+
+
+def _is_system_sender(
+    email: str,
+    *,
+    skipped_system_localparts: set[str],
+    skipped_system_prefixes: set[str],
+) -> bool:
+    localpart = email.split("@", 1)[0]
+    normalized_localpart = localpart.replace(".", "-").replace("_", "-").lower()
+    return localpart in skipped_system_localparts or normalized_localpart in skipped_system_localparts or any(
+        normalized_localpart.startswith(prefix) for prefix in skipped_system_prefixes
+    )
+
+
+def select_correspondence_seed_emails(
+    rows: list[dict[str, object]],
+    *,
+    limit: int,
+    self_aliases: set[str],
+    skipped_domains: set[str],
+    skipped_system_localparts: set[str],
+    skipped_system_prefixes: set[str],
+) -> list[str]:
+    """Select top msgvault correspondence seeds mechanically from sender profile rows."""
+    selected: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        email = str(row.get("email") or "").strip().lower()
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        if email in self_aliases:
+            continue
+        if _email_domain(email) in skipped_domains:
+            continue
+        if _is_system_sender(
+            email,
+            skipped_system_localparts=skipped_system_localparts,
+            skipped_system_prefixes=skipped_system_prefixes,
+        ):
+            continue
+        selected.append(email)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def ensure_database_exists(database_url: str) -> dict[str, object]:
+    parsed = urlparse(database_url)
+    dbname = parsed.path.lstrip("/")
+    if parsed.scheme not in {"postgresql", "postgres"} or not dbname:
+        return {"checked": False, "created": False, "reason": "not_a_named_postgres_database"}
+    maintenance_url = urlunparse(parsed._replace(path="/postgres"))
+    with psycopg.connect(maintenance_url, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (dbname,))
+            exists = cur.fetchone() is not None
+            if not exists:
+                cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dbname)))
+    return {"checked": True, "created": not exists, "database": dbname}
+
+
+def _ingest_next_up(database_url: str, path: Path) -> dict[str, int | str]:
+    events_seen = 0
+    events_upserted = 0
+    for event in iter_next_up_events(path):
+        events_seen += 1
+        upsert_source_event(database_url, event)
+        events_upserted += 1
+    return {
+        "source": "next_up",
+        "path": str(path),
+        "events_seen": events_seen,
+        "events_upserted": events_upserted,
+    }
+
+
+def _ingest_calendar(database_url: str, path: Path) -> dict[str, int | str]:
+    events_seen = 0
+    events_upserted = 0
+    for event in iter_calendar_json_events(path):
+        events_seen += 1
+        source_event_id = upsert_source_event(database_url, event)
+        upsert_evidence_ref(
+            database_url,
+            source_event_id=source_event_id,
+            ref_type="calendar_event",
+            ref_value=event.source_event_key,
+            metadata={"path": str(path)},
+        )
+        events_upserted += 1
+    return {
+        "source": "calendar",
+        "path": str(path),
+        "events_seen": events_seen,
+        "events_upserted": events_upserted,
+    }
+
+
+def _ingest_msgvault_sender_rows(
+    database_url: str,
+    rows: list[dict[str, object]],
+    *,
+    self_aliases: set[str],
+    skipped_domains: set[str],
+    skipped_system_localparts: set[str],
+    skipped_system_prefixes: set[str],
+) -> dict[str, int | str]:
+    stats = {
+        "source": "msgvault",
+        "events_seen": len(rows),
+        "events_upserted": 0,
+        "skipped_self": 0,
+        "skipped_domain": 0,
+        "skipped_system": 0,
+        "skipped_missing_email": 0,
+    }
+    for row in rows:
+        email = str(row.get("email") or "").strip().lower()
+        if not email:
+            stats["skipped_missing_email"] += 1
+            continue
+        if email in self_aliases:
+            stats["skipped_self"] += 1
+            continue
+        if _email_domain(email) in skipped_domains:
+            stats["skipped_domain"] += 1
+            continue
+        if _is_system_sender(
+            email,
+            skipped_system_localparts=skipped_system_localparts,
+            skipped_system_prefixes=skipped_system_prefixes,
+        ):
+            stats["skipped_system"] += 1
+            continue
+        event = SourceEventIn(
+            source_name="msgvault",
+            source_event_type="sender_profile",
+            source_event_key=f"msgvault:sender:{email}",
+            source_payload={
+                "email": email,
+                "display_name": row.get("display_name"),
+                "message_count": int(row.get("message_count") or 0),
+                "total_size": int(row.get("total_size") or 0),
+                "attachment_size": int(row.get("attachment_size") or 0),
+            },
+            source_posture=SourcePosture.DIRECT_INTERACTION,
+            provenance_status="msgvault_profile",
+            trust_role="direct email aggregate",
+        )
+        upsert_source_event(database_url, event)
+        stats["events_upserted"] += 1
+    return stats
+
+
+def _ingest_msgvault_correspondence(
+    settings: Settings,
+    *,
+    email: str,
+    limit: int,
+) -> dict[str, int | str]:
+    normalized_email = email.strip().lower()
+    rows = MsgvaultAdapter(settings).correspondence_messages(normalized_email, limit=limit)
+    stats = {
+        "source": "msgvault",
+        "relationship_email": normalized_email,
+        "events_seen": len(rows),
+        "events_upserted": 0,
+    }
+    for row in rows:
+        message_id = str(row.get("id") or row.get("source_message_id") or "").strip()
+        if not message_id:
+            continue
+        event = SourceEventIn(
+            source_name="msgvault",
+            source_event_type="correspondence_message",
+            source_event_key=f"msgvault:correspondence:{normalized_email}:{message_id}",
+            source_payload=row,
+            source_posture=SourcePosture.DIRECT_INTERACTION,
+            provenance_status="msgvault_message",
+            trust_role="direct email correspondence evidence",
+        )
+        source_event_id = upsert_source_event(settings.database_url, event)
+        upsert_evidence_ref(
+            settings.database_url,
+            source_event_id=source_event_id,
+            ref_type="msgvault_message",
+            ref_value=f"{normalized_email}:{message_id}",
+            metadata={
+                "relationship_email": normalized_email,
+                "msgvault_message_id": message_id,
+                "source_message_id": row.get("source_message_id"),
+                "source_conversation_id": row.get("source_conversation_id"),
+            },
+        )
+        stats["events_upserted"] += 1
+    return stats
+
+
+def _identity_candidate_report(database_url: str) -> dict[str, int | str]:
+    report = generate_identity_candidates(database_url)
+    report.update(identity_candidate_counts(database_url))
+    return report
+
+
+def run_network_pipeline(
+    settings: Settings,
+    *,
+    next_up_paths: list[Path],
+    calendar_paths: list[Path],
+    output_dir: Path,
+    create_database: bool = True,
+    sender_limit: int = 500,
+    correspondence_from_senders: int = 25,
+    correspondence_message_limit: int = 50,
+    skip_msgvault: bool = False,
+    skip_embeddings: bool = False,
+    embed_texts: EmbedTexts | None = None,
+    embed_provider: str = "ollama",
+    embed_model: str | None = None,
+    embed_limit: int | None = 500,
+    organization_worklist_limit: int = 100,
+    north_star_limit: int = 25,
+    north_star_semantic_query: str = DEFAULT_NORTH_STAR_SEMANTIC_QUERY,
+) -> dict[str, object]:
+    run_started_at = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = output_dir / run_started_at
+    artifacts: dict[str, str] = {}
+
+    database = ensure_database_exists(settings.database_url) if create_database else {"checked": False}
+    run_migrations(settings.database_url)
+
+    next_up_ingestions = [_ingest_next_up(settings.database_url, path) for path in next_up_paths]
+    artifacts["next_up_ingestions"] = _write_json(run_dir / "next_up_ingestions.json", next_up_ingestions)
+    exact_materialization = materialize_exact_emails(
+        settings.database_url,
+        source_name="next_up",
+        skipped_domains=set(settings.skipped_sender_domains),
+    )
+
+    msgvault: dict[str, object] = {"skipped": skip_msgvault}
+    if not skip_msgvault:
+        adapter = MsgvaultAdapter(settings)
+        sender_rows = adapter.top_sender_candidates(sender_limit)
+        domain_rows = adapter.top_domain_candidates(sender_limit)
+        msgvault_profile = {"senders": sender_rows, "domains": domain_rows}
+        artifacts["msgvault_profile"] = _write_json(run_dir / "msgvault_profile.json", msgvault_profile)
+        sender_ingestion = _ingest_msgvault_sender_rows(
+            settings.database_url,
+            sender_rows,
+            self_aliases=set(settings.self_email_aliases),
+            skipped_domains=set(settings.skipped_sender_domains),
+            skipped_system_localparts=set(settings.skipped_system_localparts),
+            skipped_system_prefixes=set(settings.skipped_system_prefixes),
+        )
+        sender_materialization = materialize_msgvault_senders(settings.database_url)
+        seed_emails = select_correspondence_seed_emails(
+            sender_rows,
+            limit=correspondence_from_senders,
+            self_aliases=set(settings.self_email_aliases),
+            skipped_domains=set(settings.skipped_sender_domains),
+            skipped_system_localparts=set(settings.skipped_system_localparts),
+            skipped_system_prefixes=set(settings.skipped_system_prefixes),
+        )
+        correspondence_ingestions = [
+            _ingest_msgvault_correspondence(
+                settings,
+                email=email,
+                limit=correspondence_message_limit,
+            )
+            for email in seed_emails
+        ]
+        artifacts["msgvault_correspondence_ingestions"] = _write_json(
+            run_dir / "msgvault_correspondence_ingestions.json",
+            correspondence_ingestions,
+        )
+        correspondence_materialization = materialize_msgvault_correspondence(settings.database_url)
+        msgvault = {
+            "skipped": False,
+            "sender_candidates": len(sender_rows),
+            "domain_candidates": len(domain_rows),
+            "sender_ingestion": sender_ingestion,
+            "sender_materialization": sender_materialization,
+            "correspondence_seed_emails": seed_emails,
+            "correspondence_ingestions": correspondence_ingestions,
+            "correspondence_materialization": correspondence_materialization,
+        }
+
+    calendar_ingestions = [_ingest_calendar(settings.database_url, path) for path in calendar_paths]
+    calendar_materialization = materialize_calendar_events(
+        settings.database_url,
+        self_aliases=set(settings.self_email_aliases),
+        skipped_domains=set(settings.skipped_sender_domains),
+    )
+    artifacts["calendar_ingestions"] = _write_json(run_dir / "calendar_ingestions.json", calendar_ingestions)
+
+    identity_candidates = _identity_candidate_report(settings.database_url)
+
+    embedding_result: dict[str, object] = {"skipped": skip_embeddings}
+    semantic_query_embedding = None
+    if not skip_embeddings and embed_texts is not None:
+        embedding_result = embed_curated_contacts(
+            settings.database_url,
+            embed_texts=embed_texts,
+            provider_name=embed_provider,
+            model=embed_model,
+            limit=embed_limit,
+        )
+        semantic_query_embedding = embed_texts([north_star_semantic_query])[0]
+
+    organization_worklist = history_backed_organization_worklist(
+        settings.database_url,
+        limit=organization_worklist_limit,
+        skipped_domains=set(settings.skipped_sender_domains),
+        skipped_system_localparts=set(settings.skipped_system_localparts),
+        skipped_system_prefixes=set(settings.skipped_system_prefixes),
+        missing_enrichment_only=True,
+    )
+    artifacts["organization_enrichment_worklist"] = _write_json(
+        run_dir / "organization_enrichment_worklist.json",
+        organization_worklist,
+    )
+
+    north_star_results = search_people(
+        settings.database_url,
+        role_keywords=DEFAULT_ROLE_KEYWORDS,
+        actual_employee_count_min=10,
+        actual_employee_count_max=20,
+        consultant_count_min=10,
+        consultant_count_max=20,
+        semantic_query_embedding=semantic_query_embedding,
+        sort="semantic" if semantic_query_embedding is not None else "relationship",
+        limit=north_star_limit,
+    )
+    north_star_query = {
+        "query": {
+            "role_keywords": DEFAULT_ROLE_KEYWORDS,
+            "actual_employee_count_min": 10,
+            "actual_employee_count_max": 20,
+            "consultant_count_min": 10,
+            "consultant_count_max": 20,
+            "semantic_query": north_star_semantic_query if semantic_query_embedding is not None else None,
+            "sort": "semantic" if semantic_query_embedding is not None else "relationship",
+            "limit": north_star_limit,
+        },
+        "count": len(north_star_results),
+        "results": north_star_results,
+    }
+    artifacts["north_star_query"] = _write_json(run_dir / "north_star_query.json", north_star_query)
+
+    operating_picture = operating_picture_rows(settings.database_url, limit=north_star_limit)
+    artifacts["operating_picture"] = _write_json(run_dir / "operating_picture.json", operating_picture)
+
+    report: dict[str, object] = {
+        "ok": True,
+        "run_started_at": run_started_at,
+        "database_url": settings.database_url,
+        "database": database,
+        "next_up": {
+            "paths": [str(path) for path in next_up_paths],
+            "ingestions": next_up_ingestions,
+            "materialization": exact_materialization,
+        },
+        "msgvault": msgvault,
+        "calendar": {
+            "paths": [str(path) for path in calendar_paths],
+            "ingestions": calendar_ingestions,
+            "materialization": calendar_materialization,
+        },
+        "identity_candidates": identity_candidates,
+        "embeddings": embedding_result,
+        "organization_worklist": {
+            "count": len(organization_worklist),
+            "artifact": artifacts["organization_enrichment_worklist"],
+        },
+        "north_star_query": {
+            "count": len(north_star_results),
+            "artifact": artifacts["north_star_query"],
+        },
+        "operating_picture": {
+            "count": len(operating_picture),
+            "artifact": artifacts["operating_picture"],
+        },
+        "counts": substrate_counts(settings.database_url),
+        "artifacts": artifacts,
+        "checks": [
+            "Next Up remains curated/context evidence, not relationship health.",
+            "msgvault sender and correspondence ingestion skips configured self/internal domains.",
+            "Correspondence seeds are selected mechanically from sender counts after skip rules.",
+            "Organization enrichment worklist is evidence-ranked and model/research-ready.",
+            "North Star query uses explicit organization enrichment filters for actual size/team size.",
+        ],
+    }
+    artifacts["report"] = _write_json(run_dir / "pipeline_report.json", report)
+    report["artifacts"] = artifacts
+    return report

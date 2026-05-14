@@ -17,29 +17,53 @@ DEFAULT_SELF_EMAIL_ALIASES = (
 )
 
 DEFAULT_SKIPPED_SENDER_DOMAINS = (
+    "go2impact.com",
     "intempio.com",
+    "intempio.us",
+    "lehigh.edu",
+    "mcco.us",
+    "rvibe.com",
+    "thepracticalaccountant.com",
 )
 
 DEFAULT_SKIPPED_SYSTEM_LOCALPARTS = (
+    "daily",
     "events",
+    "info",
     "onlinebanking",
+    "return",
 )
 
 DEFAULT_SKIPPED_SYSTEM_PREFIXES = (
     "alerts",
+    "auto-confirm",
+    "calendar-notification",
+    "daily",
+    "digest",
     "do-not-reply",
     "donotreply",
     "ealerts",
+    "fidelity-alerts",
+    "groups-noreply",
     "invoice",
     "invoices",
+    "mailer-daemon",
     "no-reply",
+    "news",
+    "newsletter",
     "noreply",
+    "notify",
     "notification",
     "notifications",
+    "nytdirect",
+    "ordersender",
     "receipt",
     "receipts",
+    "ship",
+    "shipment",
     "statement",
     "statements",
+    "voice-noreply",
 )
 
 

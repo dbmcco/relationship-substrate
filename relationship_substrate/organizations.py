@@ -221,10 +221,14 @@ def history_backed_organization_worklist(
     *,
     limit: int = 50,
     skipped_domains: set[str] | None = None,
+    skipped_system_localparts: set[str] | None = None,
+    skipped_system_prefixes: set[str] | None = None,
     missing_enrichment_only: bool = False,
     as_of: datetime | None = None,
 ) -> list[dict[str, Any]]:
     skipped = sorted(DEFAULT_SKIPPED_ORGANIZATION_DOMAINS | set(skipped_domains or set()))
+    skipped_localparts = sorted(skipped_system_localparts or set())
+    skipped_prefixes = sorted(skipped_system_prefixes or set())
     enrichments = organization_enrichment_by_name(database_url)
     enriched_names = sorted(enrichments.keys())
     missing_filter = (
@@ -232,7 +236,7 @@ def history_backed_organization_worklist(
         if missing_enrichment_only
         else ""
     )
-    params: list[object] = [skipped, skipped]
+    params: list[object] = [skipped, skipped, skipped_localparts, skipped_localparts, skipped_prefixes]
     if missing_enrichment_only:
         params.append(enriched_names)
     params.append(limit)
@@ -302,11 +306,26 @@ def history_backed_organization_worklist(
                   AND domain <> ''
                   GROUP BY domain
                 ),
-                direct_people AS (
+                curated_email_titles AS (
+                  SELECT
+                    email,
+                    max(title) AS title
+                  FROM curated
+                  WHERE email IS NOT NULL
+                  AND title IS NOT NULL
+                  GROUP BY email
+                ),
+                direct_people_raw AS (
                   SELECT
                     p.display_name,
                     p.primary_email AS email,
                     split_part(lower(p.primary_email), '@', 2) AS domain,
+                    lower(split_part(p.primary_email, '@', 1)) AS localpart,
+                    replace(
+                      replace(lower(split_part(p.primary_email, '@', 1)), '.', '-'),
+                      '_',
+                      '-'
+                    ) AS normalized_localpart,
                     COALESCE(e.interaction_count, 0)::int AS interaction_count,
                     COALESCE((e.metadata->>'calendar_interaction_count')::int, 0)::int AS calendar_interaction_count,
                     e.last_interaction_at
@@ -316,6 +335,17 @@ def history_backed_organization_worklist(
                   WHERE p.primary_email IS NOT NULL
                   AND split_part(lower(p.primary_email), '@', 2) <> ALL(%s)
                   AND COALESCE(e.interaction_count, 0) > 0
+                ),
+                direct_people AS (
+                  SELECT *
+                  FROM direct_people_raw
+                  WHERE localpart <> ALL(%s)
+                  AND normalized_localpart <> ALL(%s)
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM unnest(%s::text[]) AS prefix
+                    WHERE normalized_localpart LIKE prefix || '%%'
+                  )
                 ),
                 direct_domain_counts AS (
                   SELECT
@@ -338,7 +368,7 @@ def history_backed_organization_worklist(
                       ORDER BY dp.interaction_count DESC, dp.last_interaction_at DESC NULLS LAST, dp.display_name
                     ) AS person_rank
                   FROM direct_people dp
-                  LEFT JOIN curated c
+                  LEFT JOIN curated_email_titles c
                     ON c.email = dp.email
                 ),
                 strongest_people AS (

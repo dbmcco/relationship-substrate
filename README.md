@@ -57,6 +57,33 @@ This writes:
 - `output/eval/eval_report.json`
 - `output/eval/relationship_operating_picture.json`
 
+Run the operational substrate refresh:
+
+```bash
+uv run relationship-substrate run-network-pipeline \
+  --next-up-path "/Users/braydon/projects/personal/home_next_up/resources" \
+  --output-dir output/ops \
+  --sender-limit 500 \
+  --correspondence-from-senders 25 \
+  --correspondence-message-limit 50 \
+  --embed-provider ollama \
+  --embedding-model mxbai-embed-large:latest \
+  --embed-limit 500 \
+  --organization-worklist-limit 100 \
+  --north-star-limit 25
+```
+
+This creates the configured Postgres database if needed, runs migrations, ingests the whole Next Up resources directory, profiles msgvault senders/domains, seeds correspondence ingestion from the top non-self/non-excluded senders, materializes email/calendar evidence, generates identity candidates, embeds curated contacts when not skipped, exports the history-backed organization enrichment worklist, and writes the current North Star query artifact. Each run writes timestamped artifacts under `output/ops/<run-id>/`, including:
+
+- `pipeline_report.json`
+- `msgvault_profile.json`
+- `msgvault_correspondence_ingestions.json`
+- `organization_enrichment_worklist.json`
+- `north_star_query.json`
+- `operating_picture.json`
+
+Calendar ingestion is included when one or more `--calendar-path` JSON exports are supplied. Use `--skip-embeddings` for a faster structural refresh before starting Ollama-backed semantic search.
+
 Agents can also run each step independently:
 
 ```bash
@@ -83,7 +110,7 @@ uv run relationship-substrate search-people --role-keywords "" --semantic-provid
 uv run relationship-substrate export-operating-picture --from-db --limit 25
 ```
 
-Sender ingestion skips noisy internal/system senders before materialization. Exact-email materialization also skips configured domains. Defaults include Braydon's known self aliases, the `intempio.com` domain, and common automated local-parts/prefixes such as `events`, `onlinebanking`, `noreply`, `invoice`, and `statement`. Override with:
+Sender ingestion skips noisy internal/system senders before materialization. Exact-email materialization also skips configured domains. Defaults include Braydon's known self aliases, `go2impact.com`, `intempio.com`, `intempio.us`, `lehigh.edu`, `mcco.us`, `rvibe.com`, `thepracticalaccountant.com`, and common automated local-parts/prefixes such as `events`, `info`, `daily`, `onlinebanking`, `return`, `noreply`, `invoice`, `statement`, `digest`, `newsletter`, `ship`, `shipment`, `groups-noreply`, `calendar-notification`, `voice-noreply`, `auto-confirm`, and `ordersender`. Override with:
 
 ```bash
 RELATIONSHIP_SUBSTRATE_SELF_EMAILS="a@example.com,b@example.com"
