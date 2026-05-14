@@ -30,12 +30,146 @@ def _display_name(payload: dict) -> str:
     return name or payload.get("email") or "Unknown person"
 
 
+def _clean_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _upsert_organization(
+    cur: psycopg.Cursor,
+    *,
+    name: str,
+    source_posture: str,
+    provenance_status: str,
+) -> UUID:
+    metadata = Jsonb({"source": "curated_contact", "trust_role": "identity/context seed"})
+    cur.execute(
+        """
+        SELECT id
+        FROM relationship_substrate.organization
+        WHERE lower(name) = lower(%s)
+        ORDER BY created_at
+        LIMIT 1
+        """,
+        (name,),
+    )
+    row = cur.fetchone()
+    if row is not None:
+        organization_id = row[0]
+        cur.execute(
+            """
+            UPDATE relationship_substrate.organization
+            SET name = %s,
+                source_posture = CASE WHEN metadata ? 'enrichment' THEN source_posture ELSE %s END,
+                provenance_status = CASE WHEN metadata ? 'enrichment' THEN provenance_status ELSE %s END,
+                metadata = metadata || %s,
+                updated_at = now()
+            WHERE id = %s
+            """,
+            (name, source_posture, provenance_status, metadata, organization_id),
+        )
+        return organization_id
+    cur.execute(
+        """
+        INSERT INTO relationship_substrate.organization (
+          name, source_posture, provenance_status, metadata
+        )
+        VALUES (%s, %s, %s, %s)
+        RETURNING id
+        """,
+        (name, source_posture, provenance_status, metadata),
+    )
+    return cur.fetchone()[0]
+
+
+def _upsert_affiliation(
+    cur: psycopg.Cursor,
+    *,
+    person_id: UUID,
+    organization_id: UUID,
+    role_or_title: str | None,
+    source_event_id: UUID,
+    source_posture: str,
+    provenance_status: str,
+) -> None:
+    metadata = Jsonb(
+        {
+            "source": "curated_contact",
+            "source_event_id": str(source_event_id),
+            "trust_role": "identity/context seed",
+        }
+    )
+    cur.execute(
+        """
+        SELECT id
+        FROM relationship_substrate.affiliation
+        WHERE person_id = %s
+        AND organization_id = %s
+        AND metadata->>'source_event_id' = %s
+        LIMIT 1
+        """,
+        (person_id, organization_id, str(source_event_id)),
+    )
+    row = cur.fetchone()
+    if row is None:
+        cur.execute(
+            """
+            SELECT id
+            FROM relationship_substrate.affiliation
+            WHERE person_id = %s
+            AND organization_id = %s
+            AND role_or_title IS NOT DISTINCT FROM %s
+            LIMIT 1
+            """,
+            (person_id, organization_id, role_or_title),
+        )
+        row = cur.fetchone()
+    if row is not None:
+        cur.execute(
+            """
+            UPDATE relationship_substrate.affiliation
+            SET role_or_title = %s,
+                source_posture = %s,
+                provenance_status = %s,
+                metadata = metadata || %s
+            WHERE id = %s
+            """,
+            (role_or_title, source_posture, provenance_status, metadata, row[0]),
+        )
+        return
+    cur.execute(
+        """
+        INSERT INTO relationship_substrate.affiliation (
+          person_id, organization_id, role_or_title, source_posture, provenance_status, metadata
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (person_id, organization_id, role_or_title)
+        DO UPDATE SET
+          source_posture = EXCLUDED.source_posture,
+          provenance_status = EXCLUDED.provenance_status,
+          metadata = EXCLUDED.metadata
+        """,
+        (
+            person_id,
+            organization_id,
+            role_or_title,
+            source_posture,
+            provenance_status,
+            metadata,
+        ),
+    )
+
+
 def materialize_curated_contact(database_url: str, source_event_id: UUID) -> UUID:
     event = get_source_event(database_url, source_event_id)
     payload = event["source_payload"]
     email = _clean_email(payload.get("email"))
     if email is None:
         raise ValueError("curated contact requires an email for v1 materialization")
+    company = _clean_text(payload.get("company"))
+    title = _clean_text(payload.get("title"))
 
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
@@ -69,6 +203,22 @@ def materialize_curated_contact(database_url: str, source_event_id: UUID) -> UUI
                 """,
                 (person_id, email, event["source_posture"], event["provenance_status"]),
             )
+            if company is not None:
+                organization_id = _upsert_organization(
+                    cur,
+                    name=company,
+                    source_posture=event["source_posture"],
+                    provenance_status=event["provenance_status"],
+                )
+                _upsert_affiliation(
+                    cur,
+                    person_id=person_id,
+                    organization_id=organization_id,
+                    role_or_title=title,
+                    source_event_id=source_event_id,
+                    source_posture=event["source_posture"],
+                    provenance_status=event["provenance_status"],
+                )
         conn.commit()
     return person_id
 
