@@ -31,7 +31,7 @@ from relationship_substrate.repositories import (
     upsert_evidence_ref,
     upsert_source_event,
 )
-from relationship_substrate.search import DEFAULT_ROLE_KEYWORDS, search_people
+from relationship_substrate.search import DEFAULT_ROLE_KEYWORDS, search_history_backed_people, search_people
 
 
 EmbedTexts = Callable[[list[str]], list[list[float]]]
@@ -405,6 +405,31 @@ def run_network_pipeline(
     }
     artifacts["north_star_query"] = _write_json(run_dir / "north_star_query.json", north_star_query)
 
+    history_backed_north_star_results = search_history_backed_people(
+        settings.database_url,
+        actual_employee_count_min=10,
+        actual_employee_count_max=20,
+        consultant_count_min=10,
+        consultant_count_max=20,
+        limit=north_star_limit,
+    )
+    history_backed_north_star_query = {
+        "query": {
+            "actual_employee_count_min": 10,
+            "actual_employee_count_max": 20,
+            "consultant_count_min": 10,
+            "consultant_count_max": 20,
+            "limit": north_star_limit,
+            "evidence_surface": "msgvault_calendar_history_by_email_domain",
+        },
+        "count": len(history_backed_north_star_results),
+        "results": history_backed_north_star_results,
+    }
+    artifacts["history_backed_north_star_query"] = _write_json(
+        run_dir / "history_backed_north_star_query.json",
+        history_backed_north_star_query,
+    )
+
     operating_picture = operating_picture_rows(settings.database_url, limit=north_star_limit)
     artifacts["operating_picture"] = _write_json(run_dir / "operating_picture.json", operating_picture)
 
@@ -434,6 +459,10 @@ def run_network_pipeline(
             "count": len(north_star_results),
             "artifact": artifacts["north_star_query"],
         },
+        "history_backed_north_star_query": {
+            "count": len(history_backed_north_star_results),
+            "artifact": artifacts["history_backed_north_star_query"],
+        },
         "operating_picture": {
             "count": len(operating_picture),
             "artifact": artifacts["operating_picture"],
@@ -446,6 +475,7 @@ def run_network_pipeline(
             "Correspondence seeds are selected mechanically from sender counts after skip rules.",
             "Organization enrichment worklist is evidence-ranked and model/research-ready.",
             "North Star query uses explicit organization enrichment filters for actual size/team size.",
+            "History-backed North Star query searches msgvault/calendar people by enriched email-domain organizations.",
         ],
     }
     artifacts["report"] = _write_json(run_dir / "pipeline_report.json", report)

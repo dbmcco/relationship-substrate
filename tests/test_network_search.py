@@ -6,13 +6,14 @@ from uuid import uuid4
 import psycopg
 from psycopg.types.json import Jsonb
 
+from relationship_substrate.cli import ingest_msgvault_sender_rows
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
 from relationship_substrate.embeddings import embed_curated_contacts
-from relationship_substrate.materialize import materialize_exact_emails
+from relationship_substrate.materialize import materialize_exact_emails, materialize_msgvault_senders
 from relationship_substrate.organizations import upsert_organization_enrichment
 from relationship_substrate.repositories import upsert_source_event
-from relationship_substrate.search import search_people
+from relationship_substrate.search import search_history_backed_people, search_people
 
 
 def _curated_contact(
@@ -470,3 +471,59 @@ def test_search_people_filters_by_enriched_consultant_count(database_url):
     assert unknown_email not in result_emails
     assert "consultant_count_estimate:14" in result["match_reasons"]
     assert result["organization_enrichment"]["consultant_count_estimate"] == 14
+
+
+def test_search_history_backed_people_filters_by_domain_organization_enrichment(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    target_domain = f"target-history-{run_id}.example"
+    excluded_domain = f"excluded-history-{run_id}.example"
+    ingest_msgvault_sender_rows(
+        database_url,
+        [
+            {"email": f"strong@{target_domain}", "display_name": "Strong Target", "message_count": 20},
+            {"email": f"weak@{target_domain}", "display_name": "Weak Target", "message_count": 3},
+            {"email": f"big@{excluded_domain}", "display_name": "Big Excluded", "message_count": 50},
+        ],
+        self_aliases=set(),
+        skipped_domains=set(),
+    )
+    materialize_msgvault_senders(database_url)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=target_domain,
+        company_type="life_sciences_training_consultancy",
+        employee_count_min=18,
+        employee_count_max=18,
+        employee_count_label="test public team count",
+        consultant_count_estimate=18,
+        source_name="test",
+        provenance_status="test",
+    )
+    upsert_organization_enrichment(
+        database_url,
+        company_name=excluded_domain,
+        company_type="large_company",
+        employee_count_min=51,
+        employee_count_max=200,
+        employee_count_label="test large company",
+        consultant_count_estimate=100,
+        source_name="test",
+        provenance_status="test",
+    )
+
+    rows = search_history_backed_people(
+        database_url,
+        actual_employee_count_min=10,
+        actual_employee_count_max=20,
+        consultant_count_min=10,
+        consultant_count_max=20,
+        limit=1000,
+    )
+
+    current = [row for row in rows if row["domain"] == target_domain]
+    assert [row["email"] for row in current] == [
+        f"strong@{target_domain}",
+        f"weak@{target_domain}",
+    ]
+    assert all(row["domain"] != excluded_domain for row in rows)

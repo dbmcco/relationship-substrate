@@ -80,6 +80,7 @@ This creates the configured Postgres database if needed, runs migrations, ingest
 - `msgvault_correspondence_ingestions.json`
 - `organization_enrichment_worklist.json`
 - `north_star_query.json`
+- `history_backed_north_star_query.json`
 - `operating_picture.json`
 
 Calendar ingestion is included when one or more `--calendar-path` JSON exports are supplied. Use `--skip-embeddings` for a faster structural refresh before starting Ollama-backed semantic search.
@@ -107,6 +108,7 @@ uv run relationship-substrate search-people --role-keywords "consultant,advisor,
 uv run relationship-substrate search-people --role-keywords "" --semantic-provider ollama --embedding-model mxbai-embed-large:latest --semantic-query "consultants or advisory firms in medcomms, pharma operations, supply chain, or business consulting" --known-people-at-company-min 10 --known-people-at-company-max 15 --sort semantic --limit 10
 uv run relationship-substrate search-people --role-keywords "" --semantic-provider ollama --embedding-model mxbai-embed-large:latest --semantic-query "consulting background in medcoms medical communications agency" --actual-employee-count-min 10 --actual-employee-count-max 20 --sort semantic --limit 5
 uv run relationship-substrate search-people --role-keywords "" --semantic-provider ollama --embedding-model mxbai-embed-large:latest --semantic-query "consulting background in medcoms medical communications healthcare life sciences strategy consultancy" --consultant-count-min 10 --consultant-count-max 20 --sort semantic --limit 5
+uv run relationship-substrate search-history-backed-people --actual-employee-count-min 10 --actual-employee-count-max 20 --consultant-count-min 10 --consultant-count-max 20 --limit 10
 uv run relationship-substrate export-operating-picture --from-db --limit 25
 ```
 
@@ -136,6 +138,8 @@ Person dossiers are factual inspection views for agents. `show-person --email` r
 Freshness is mechanical, not a relationship-health score. Operating-picture rows and person dossiers expose `freshness_state`, `days_since_last_interaction`, and `freshness_basis` from the last materialized interaction only: `recent` (0-30 days), `active` (31-120), `stale` (121-365), `dormant` (366+), or `unknown` when no interaction is materialized.
 
 Network search is the first executable North Star query. `search-people` searches Next Up curated contact evidence, filters by explicit constraints, ranks by materialized relationship interaction count or embedding similarity, and returns source event provenance plus mechanical freshness. The result field `known_people_at_company_count` is not actual employer size; actual company size/type belongs in `organization_enrichment`, populated separately with `upsert-organization-enrichment` and its own provenance. Use `--known-people-at-company-*` for Braydon's known network count. Use `--actual-employee-count-*` for actual organization size; organizations without employee-count enrichment do not match actual-size filters, and broad ranges such as `11-50` do not satisfy narrower requests such as `10-20`. Use `--consultant-count-*` for separately researched consultant/team counts from company pages, employee-profile counts, or other sourced estimates. `embed-curated-contacts` populates `person.content_embedding` from curated contact context. The default provider is local Ollama at `http://localhost:11434/api/embed`; `mxbai-embed-large:latest` is the current local default. OpenAI remains available through `--provider openai` and `OPENAI_API_KEY`; `--provider hash` exists only for local smoke tests. Network search does not yet perform external recent-news research or draft outreach.
+
+History-backed people search is the operational North Star query for email/calendar-derived relationships. `search-history-backed-people` searches materialized msgvault/calendar people by email domain, joins those domains to reviewed `organization_enrichment`, filters by actual employee count and consultant/team count, and ranks by direct interaction count. This is the right command for questions like: "give me five people who are consultants at consulting firms with around ten people on staff." It complements `search-people`; it does not require the person to exist in a curated Next Up spreadsheet.
 
 Organization enrichment is a separate batch workflow. `export-organization-enrichment-worklist` lists companies from curated contacts with known-network count, sample titles, existing enrichment, and a research prompt. Agents can enrich those companies from institutional knowledge, Perplexity, or direct web research, then load reviewed facts with `import-organization-enrichments`. Imports require `company_name` and `source_name`; supported fields include `company_type`, `employee_count_min`, `employee_count_max`, `employee_count_label`, `consultant_count_estimate`, `source_url`, and `provenance_status`.
 

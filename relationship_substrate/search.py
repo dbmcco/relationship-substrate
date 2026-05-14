@@ -299,3 +299,92 @@ def search_people(
     sort_mode = sort or ("semantic" if semantic_query_embedding is not None and not keywords else "relationship")
     key = _semantic_sort_key if sort_mode == "semantic" else _relationship_sort_key
     return sorted(results, key=key, reverse=True)[:limit]
+
+
+def search_history_backed_people(
+    database_url: str,
+    *,
+    actual_employee_count_min: int | None = None,
+    actual_employee_count_max: int | None = None,
+    consultant_count_min: int | None = None,
+    consultant_count_max: int | None = None,
+    limit: int = 25,
+    as_of: datetime | None = None,
+) -> list[dict[str, Any]]:
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                  p.id,
+                  p.display_name,
+                  p.primary_email,
+                  split_part(lower(p.primary_email), '@', 2) AS domain,
+                  COALESCE(e.interaction_count, 0)::int AS interaction_count,
+                  e.last_interaction_at,
+                  COALESCE((e.metadata->>'calendar_interaction_count')::int, 0)::int
+                    AS calendar_interaction_count,
+                  o.name,
+                  o.metadata->'enrichment' AS organization_enrichment
+                FROM relationship_substrate.person p
+                JOIN relationship_substrate.relationship_edge e
+                  ON e.person_id = p.id
+                JOIN relationship_substrate.organization o
+                  ON lower(o.name) = split_part(lower(p.primary_email), '@', 2)
+                WHERE p.primary_email IS NOT NULL
+                AND o.metadata ? 'enrichment'
+                ORDER BY COALESCE(e.interaction_count, 0) DESC,
+                  e.last_interaction_at DESC NULLS LAST,
+                  p.display_name
+                """
+            )
+            rows = cur.fetchall()
+
+    results: list[dict[str, Any]] = []
+    seen_emails: set[str] = set()
+    for row in rows:
+        email = _clean_email(row[2])
+        if not email or email in seen_emails:
+            continue
+        enrichment = row[8]
+        if not _enrichment_matches_employee_range(
+            enrichment,
+            actual_employee_count_min=actual_employee_count_min,
+            actual_employee_count_max=actual_employee_count_max,
+        ):
+            continue
+        if not _enrichment_matches_consultant_count(
+            enrichment,
+            consultant_count_min=consultant_count_min,
+            consultant_count_max=consultant_count_max,
+        ):
+            continue
+        interaction_count = int(row[4] or 0)
+        calendar_interaction_count = int(row[6] or 0)
+        last_interaction_at = row[5].isoformat() if row[5] else None
+        results.append(
+            {
+                "person_id": str(row[0]),
+                "name": row[1],
+                "email": email,
+                "domain": row[3],
+                "company": row[7],
+                "organization_enrichment": enrichment,
+                "relationship": {
+                    "interaction_count": interaction_count,
+                    "email_interaction_count": max(interaction_count - calendar_interaction_count, 0),
+                    "calendar_interaction_count": calendar_interaction_count,
+                    "last_interaction_at": last_interaction_at,
+                    "freshness": relationship_freshness(last_interaction_at, as_of=as_of),
+                },
+                "match_reasons": [
+                    "history_backed_domain",
+                    f"actual_employee_count:{enrichment.get('employee_count_min')}-{enrichment.get('employee_count_max')}",
+                    f"consultant_count_estimate:{enrichment.get('consultant_count_estimate')}",
+                ],
+            }
+        )
+        seen_emails.add(email)
+        if len(results) >= limit:
+            break
+    return results

@@ -50,7 +50,7 @@ from relationship_substrate.repositories import (
     upsert_evidence_ref,
     upsert_source_event,
 )
-from relationship_substrate.search import DEFAULT_ROLE_KEYWORDS, search_people
+from relationship_substrate.search import DEFAULT_ROLE_KEYWORDS, search_history_backed_people, search_people
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -121,6 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--embedding-model", default=None)
     search.add_argument("--sort", choices=["relationship", "semantic"], default=None)
     search.add_argument("--limit", type=int, default=25)
+    history_search = subparsers.add_parser("search-history-backed-people")
+    history_search.add_argument("--actual-employee-count-min", type=int, default=None)
+    history_search.add_argument("--actual-employee-count-max", type=int, default=None)
+    history_search.add_argument("--consultant-count-min", type=int, default=None)
+    history_search.add_argument("--consultant-count-max", type=int, default=None)
+    history_search.add_argument("--limit", type=int, default=25)
     embed = subparsers.add_parser("embed-curated-contacts")
     embed.add_argument("--provider", choices=["ollama", "openai", "hash"], default="ollama")
     embed.add_argument("--model", default=None)
@@ -695,6 +701,29 @@ def main() -> int:
                     if args.semantic_query
                     else None,
                     "sort": args.sort,
+                    "limit": args.limit,
+                },
+                "count": len(results),
+                "results": results,
+            }
+        )
+        return 0
+    if args.command == "search-history-backed-people":
+        results = search_history_backed_people(
+            settings.database_url,
+            actual_employee_count_min=args.actual_employee_count_min,
+            actual_employee_count_max=args.actual_employee_count_max,
+            consultant_count_min=args.consultant_count_min,
+            consultant_count_max=args.consultant_count_max,
+            limit=args.limit,
+        )
+        _print_json(
+            {
+                "query": {
+                    "actual_employee_count_min": args.actual_employee_count_min,
+                    "actual_employee_count_max": args.actual_employee_count_max,
+                    "consultant_count_min": args.consultant_count_min,
+                    "consultant_count_max": args.consultant_count_max,
                     "limit": args.limit,
                 },
                 "count": len(results),
