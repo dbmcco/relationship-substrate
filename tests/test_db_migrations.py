@@ -32,6 +32,7 @@ def test_run_migrations_creates_core_tables(database_url):
         "ingestion_run",
         "interaction",
         "person",
+        "network_packet",
         "relationship_state",
         "research_snapshot",
         "source_event",
@@ -40,3 +41,4 @@ def test_run_migrations_creates_core_tables(database_url):
     }.issubset(tables)
     assert "001_initial.sql" in versions
     assert "003_research_snapshots.sql" in versions
+    assert "004_network_packets.sql" in versions

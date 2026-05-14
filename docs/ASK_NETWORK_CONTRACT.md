@@ -347,6 +347,25 @@ When `--model-proposal` is supplied, the CLI validates a list of these proposals
 
 The list order is model-owned ranking. Code preserves that order and validates only schema, person membership, and citations.
 
+## Packet Persistence
+
+`ask-network --save-packet` stores an inspectable packet record:
+
+```text
+relationship-substrate ask-network ... --model-proposal recommendations.json --save-packet
+relationship-substrate show-network-packet --id <packet_record.id>
+```
+
+The stored record includes:
+
+- packet kind and contract version
+- query and readiness
+- compact packet summary
+- source refs for people, evidence, and research
+- validated model recommendations
+
+The stored summary intentionally omits raw relationship evidence bodies and full relationship-intelligence payloads. It keeps references so later feedback can point to the exact packet version without duplicating the evidence ledger.
+
 ## Research Context
 
 V1 can accept the existing loose research JSON as `research_context`.

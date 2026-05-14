@@ -36,6 +36,7 @@ from relationship_substrate.network_ask import (
     prepare_ask_network_packet,
     validate_ask_network_recommendations,
 )
+from relationship_substrate.network_packets import get_network_packet, persist_ask_network_packet
 from relationship_substrate.organizations import (
     history_backed_organization_worklist,
     import_organization_enrichments,
@@ -142,6 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
     ask_network.add_argument("--research-snapshot-subject-type", default=None)
     ask_network.add_argument("--research-snapshot-limit", type=int, default=5)
     ask_network.add_argument("--model-proposal", default=None)
+    ask_network.add_argument("--save-packet", action="store_true")
     ask_network.add_argument("--evidence-limit", type=int, default=10)
     ask_network.add_argument("--prior-state-limit", type=int, default=3)
     ask_network.add_argument("--refresh-missing-evidence", action="store_true")
@@ -158,6 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_ask_network.add_argument("--research-snapshot-subject-type", default=None)
     eval_ask_network.add_argument("--research-snapshot-limit", type=int, default=5)
     eval_ask_network.add_argument("--model-proposal", default=None)
+    eval_ask_network.add_argument("--save-packet", action="store_true")
     eval_ask_network.add_argument("--evidence-limit", type=int, default=10)
     eval_ask_network.add_argument("--prior-state-limit", type=int, default=3)
     eval_ask_network.add_argument("--refresh-missing-evidence", action="store_true")
@@ -211,6 +214,8 @@ def build_parser() -> argparse.ArgumentParser:
     research_context.add_argument("--subject", required=True)
     research_context.add_argument("--subject-type", default=None)
     research_context.add_argument("--limit", type=int, default=5)
+    show_network_packet = subparsers.add_parser("show-network-packet")
+    show_network_packet.add_argument("--id", required=True)
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -749,6 +754,8 @@ def main() -> int:
                     recommendations,
                 ),
             }
+        if args.save_packet:
+            packet["packet_record"] = persist_ask_network_packet(settings.database_url, packet)
         _print_json(packet)
         return 0
     if args.command == "eval-ask-network":
@@ -795,6 +802,8 @@ def main() -> int:
                     recommendations,
                 ),
             }
+        if args.save_packet:
+            packet["packet_record"] = persist_ask_network_packet(settings.database_url, packet)
         _print_json(evaluate_ask_network_packet(packet))
         return 0
     if args.command == "persist-relationship-state":
@@ -884,6 +893,10 @@ def main() -> int:
                 limit=args.limit,
             )
         )
+        return 0
+    if args.command == "show-network-packet":
+        run_migrations(settings.database_url)
+        _print_json(get_network_packet(settings.database_url, packet_id=args.id))
         return 0
     if args.command == "search-people":
         semantic_query_embedding = None
