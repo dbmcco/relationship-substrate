@@ -383,3 +383,64 @@ def prepare_ask_network_packet(
         "model_contract": _model_contract(),
         "relationship_tone_model_contract": base_packet["relationship_tone_model_contract"],
     }
+
+
+def _check(check_id: str, passed: bool, detail: str) -> dict[str, Any]:
+    return {"id": check_id, "passed": bool(passed), "detail": detail}
+
+
+def evaluate_ask_network_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    people = packet.get("people") or []
+    limit = ((packet.get("query") or {}).get("limits") or {}).get("candidate_limit")
+    checks = [
+        _check(
+            "packet_contract",
+            packet.get("ask_stage") == "network_relationship_packet"
+            and packet.get("contract_version") == ASK_NETWORK_CONTRACT_VERSION
+            and isinstance(packet.get("query"), dict)
+            and isinstance(packet.get("readiness"), dict),
+            "Packet exposes the ask-network stage, contract version, query, and readiness.",
+        ),
+        _check(
+            "candidate_count_within_limit",
+            isinstance(limit, int) and int(packet.get("count") or 0) <= limit,
+            "Returned candidate count does not exceed the requested limit.",
+        ),
+        _check(
+            "organization_size_evidence",
+            bool(people)
+            and all(
+                (person.get("organization_context") or {}).get("actual_employee_count_min") is not None
+                and (person.get("organization_context") or {}).get("actual_employee_count_max") is not None
+                for person in people
+            ),
+            "Every candidate has actual organization size evidence from enrichment.",
+        ),
+        _check(
+            "relationship_evidence",
+            bool(people)
+            and all(
+                int((person.get("evidence_summary") or {}).get("evidence_ref_count") or 0) > 0
+                for person in people
+            ),
+            "Every candidate has direct relationship evidence refs.",
+        ),
+        _check(
+            "readiness_warnings_visible",
+            bool((packet.get("readiness") or {}).get("warnings") or (packet.get("readiness") or {}).get("missing"))
+            or bool((packet.get("readiness") or {}).get("ready_for_outreach_drafting")),
+            "Readiness warnings are visible unless the packet is outreach-ready.",
+        ),
+        _check(
+            "no_code_generated_draft",
+            "draft_email" not in packet
+            and all("draft_email" not in person for person in people),
+            "Code did not generate draft outreach inside the ask-network packet.",
+        ),
+    ]
+    return {
+        "eval_stage": "ask_network_contract_eval",
+        "ok": all(check["passed"] for check in checks),
+        "checks": checks,
+        "packet": packet,
+    }

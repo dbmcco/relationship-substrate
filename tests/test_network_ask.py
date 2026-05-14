@@ -197,3 +197,57 @@ def test_ask_network_refreshes_missing_evidence_and_rebuilds_packet(database_url
         },
     } in person_packet["packet_readiness"]["refresh_actions"]
     assert packet["readiness"]["refresh_actions"] == person_packet["packet_readiness"]["refresh_actions"]
+
+
+def test_eval_ask_network_cli_reports_contract_checks(database_url, monkeypatch, capsys):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    unique_count = 900_000 + int(run_id[:6], 16)
+    domain = f"ask-eval-{run_id}.example"
+    email = f"consultant@{domain}"
+    evidence_ref_id = _relationship_evidence(database_url, email=email)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_consulting_firm",
+        employee_count_min=unique_count,
+        employee_count_max=unique_count,
+        employee_count_label="unique eval team count",
+        consultant_count_estimate=unique_count,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+
+    report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "eval-ask-network",
+        "--goal",
+        "Find consultants at small firms.",
+        "--actual-employee-count-min",
+        str(unique_count),
+        "--actual-employee-count-max",
+        str(unique_count),
+        "--consultant-count-min",
+        str(unique_count),
+        "--consultant-count-max",
+        str(unique_count),
+        "--limit",
+        "1",
+        "--evidence-limit",
+        "3",
+    )
+
+    assert report["eval_stage"] == "ask_network_contract_eval"
+    assert report["ok"] is True
+    assert report["packet"]["people"][0]["email"] == email
+    assert evidence_ref_id in report["packet"]["people"][0]["model_inputs"]["candidate_evidence_refs"]
+    checks = {check["id"]: check for check in report["checks"]}
+    assert checks["packet_contract"]["passed"] is True
+    assert checks["candidate_count_within_limit"]["passed"] is True
+    assert checks["organization_size_evidence"]["passed"] is True
+    assert checks["relationship_evidence"]["passed"] is True
+    assert checks["readiness_warnings_visible"]["passed"] is True
+    assert checks["no_code_generated_draft"]["passed"] is True
