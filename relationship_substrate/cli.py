@@ -135,6 +135,8 @@ def build_parser() -> argparse.ArgumentParser:
     ask_network.add_argument("--research-context", default=None)
     ask_network.add_argument("--evidence-limit", type=int, default=10)
     ask_network.add_argument("--prior-state-limit", type=int, default=3)
+    ask_network.add_argument("--refresh-missing-evidence", action="store_true")
+    ask_network.add_argument("--refresh-evidence-limit", type=int, default=50)
     persist_state = subparsers.add_parser("persist-relationship-state")
     persist_state.add_argument("--email", required=True)
     persist_state.add_argument("--proposal", required=True)
@@ -677,6 +679,15 @@ def main() -> int:
         research_context = None
         if args.research_context:
             research_context = json.loads(Path(args.research_context).read_text(encoding="utf-8"))
+        refresh_missing_evidence = None
+        if args.refresh_missing_evidence:
+            def refresh_missing_evidence(*, email: str, limit: int) -> dict[str, object]:
+                ingestion = ingest_msgvault_correspondence(settings, email=email, limit=limit)
+                materialization = materialize_msgvault_correspondence(settings.database_url)
+                return {
+                    "ingestion": ingestion,
+                    "materialization": materialization,
+                }
         _print_json(
             prepare_ask_network_packet(
                 settings.database_url,
@@ -689,6 +700,8 @@ def main() -> int:
                 research_context=research_context,
                 evidence_limit=args.evidence_limit,
                 prior_state_limit=args.prior_state_limit,
+                refresh_missing_evidence=refresh_missing_evidence,
+                refresh_evidence_limit=args.refresh_evidence_limit,
             )
         )
         return 0

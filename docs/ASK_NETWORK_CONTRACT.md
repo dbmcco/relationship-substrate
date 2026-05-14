@@ -33,6 +33,8 @@ relationship-substrate ask-network \
   --limit 5 \
   --evidence-limit 10 \
   --prior-state-limit 3 \
+  --refresh-missing-evidence \
+  --refresh-evidence-limit 50 \
   --research-context path/to/research.json
 ```
 
@@ -57,7 +59,8 @@ relationship-substrate ask-network \
   "limits": {
     "candidate_limit": "integer",
     "evidence_limit": "integer",
-    "prior_state_limit": "integer"
+    "prior_state_limit": "integer",
+    "refresh_evidence_limit": "integer or null"
   },
   "freshness": {
     "require_current_research": "boolean",
@@ -363,11 +366,9 @@ Until research snapshots are persisted, the packet must label research context a
 
 ## Background Refresh Contract
 
-`ask-network` may trigger bounded readiness refreshes only when explicitly implemented by `add-evidence-readiness-refresh`.
+`ask-network` may trigger bounded readiness refreshes when `--refresh-missing-evidence` is supplied.
 
-Before that task lands, `ask-network` should only report missing or stale evidence.
-
-Allowed future refresh actions:
+Allowed refresh actions:
 
 - bounded msgvault correspondence ingest for selected candidates
 - bounded calendar materialization refresh
@@ -376,6 +377,8 @@ Allowed future refresh actions:
 - embedding refresh request
 
 Refresh actions must be visible in `readiness.refresh_actions`.
+
+V1 implements bounded msgvault correspondence refresh only. Other refresh actions remain future work and should be added as explicit tasks.
 
 ## Current V1 Mapping
 

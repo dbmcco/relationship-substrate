@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from relationship_substrate.outreach import prepare_history_backed_outreach_proposal_packet
@@ -79,7 +80,9 @@ def _packet_readiness(
     *,
     evidence_summary: dict[str, Any],
     research_refs: set[str],
+    refresh_actions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    refresh_actions = refresh_actions or []
     missing: list[str] = []
     if not evidence_summary["has_direct_relationship_evidence"]:
         missing.append("relationship_evidence")
@@ -106,7 +109,7 @@ def _packet_readiness(
         "warnings": warnings,
         "missing": missing,
         "stale": [],
-        "refresh_actions": [],
+        "refresh_actions": refresh_actions,
     }
 
 
@@ -225,22 +228,19 @@ def _model_contract() -> dict[str, Any]:
     }
 
 
-def prepare_ask_network_packet(
+def _base_history_packet(
     database_url: str,
     *,
-    goal: str,
-    actual_employee_count_min: int | None = None,
-    actual_employee_count_max: int | None = None,
-    consultant_count_min: int | None = None,
-    consultant_count_max: int | None = None,
-    limit: int = 10,
-    research_context: Any | None = None,
-    evidence_limit: int = 10,
-    prior_state_limit: int = 3,
+    actual_employee_count_min: int | None,
+    actual_employee_count_max: int | None,
+    consultant_count_min: int | None,
+    consultant_count_max: int | None,
+    limit: int,
+    research_context: Any,
+    evidence_limit: int,
+    prior_state_limit: int,
 ) -> dict[str, Any]:
-    research_context = research_context if research_context is not None else {}
-    research_refs = _research_refs(research_context)
-    base_packet = prepare_history_backed_outreach_proposal_packet(
+    return prepare_history_backed_outreach_proposal_packet(
         database_url,
         actual_employee_count_min=actual_employee_count_min,
         actual_employee_count_max=actual_employee_count_max,
@@ -251,13 +251,25 @@ def prepare_ask_network_packet(
         evidence_limit=evidence_limit,
         prior_state_limit=prior_state_limit,
     )
+
+
+def _decorate_people(
+    base_people: list[dict[str, Any]],
+    *,
+    goal: str,
+    research_refs: set[str],
+    refresh_actions_by_email: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    refresh_actions_by_email = refresh_actions_by_email or {}
     people: list[dict[str, Any]] = []
-    for base_person in base_packet["people"]:
+    for base_person in base_people:
+        email = base_person["email"]
         relationship_intelligence = base_person["relationship_intelligence"]
         evidence_summary = _evidence_summary(base_person)
         packet_readiness = _packet_readiness(
             evidence_summary=evidence_summary,
             research_refs=research_refs,
+            refresh_actions=refresh_actions_by_email.get(email, []),
         )
         people.append(
             {
@@ -272,6 +284,73 @@ def prepare_ask_network_packet(
                 ),
             }
         )
+    return people
+
+
+def prepare_ask_network_packet(
+    database_url: str,
+    *,
+    goal: str,
+    actual_employee_count_min: int | None = None,
+    actual_employee_count_max: int | None = None,
+    consultant_count_min: int | None = None,
+    consultant_count_max: int | None = None,
+    limit: int = 10,
+    research_context: Any | None = None,
+    evidence_limit: int = 10,
+    prior_state_limit: int = 3,
+    refresh_missing_evidence: Callable[..., dict[str, Any]] | None = None,
+    refresh_evidence_limit: int = 50,
+) -> dict[str, Any]:
+    research_context = research_context if research_context is not None else {}
+    research_refs = _research_refs(research_context)
+    base_packet = _base_history_packet(
+        database_url,
+        actual_employee_count_min=actual_employee_count_min,
+        actual_employee_count_max=actual_employee_count_max,
+        consultant_count_min=consultant_count_min,
+        consultant_count_max=consultant_count_max,
+        limit=limit,
+        research_context=research_context,
+        evidence_limit=evidence_limit,
+        prior_state_limit=prior_state_limit,
+    )
+    people = _decorate_people(base_packet["people"], goal=goal, research_refs=research_refs)
+
+    refresh_actions_by_email: dict[str, list[dict[str, Any]]] = {}
+    if refresh_missing_evidence is not None:
+        missing_evidence_emails = [
+            person["email"]
+            for person in people
+            if not person["evidence_summary"]["has_direct_relationship_evidence"]
+        ]
+        for email in missing_evidence_emails:
+            refresh_actions_by_email.setdefault(email, []).append(
+                {
+                    "type": "msgvault_correspondence",
+                    "email": email,
+                    "limit": refresh_evidence_limit,
+                    "result": refresh_missing_evidence(email=email, limit=refresh_evidence_limit),
+                }
+            )
+        if missing_evidence_emails:
+            base_packet = _base_history_packet(
+                database_url,
+                actual_employee_count_min=actual_employee_count_min,
+                actual_employee_count_max=actual_employee_count_max,
+                consultant_count_min=consultant_count_min,
+                consultant_count_max=consultant_count_max,
+                limit=limit,
+                research_context=research_context,
+                evidence_limit=evidence_limit,
+                prior_state_limit=prior_state_limit,
+            )
+            people = _decorate_people(
+                base_packet["people"],
+                goal=goal,
+                research_refs=research_refs,
+                refresh_actions_by_email=refresh_actions_by_email,
+            )
 
     return {
         "ask_stage": "network_relationship_packet",
@@ -294,6 +373,7 @@ def prepare_ask_network_packet(
                 "candidate_limit": limit,
                 "evidence_limit": evidence_limit,
                 "prior_state_limit": prior_state_limit,
+                "refresh_evidence_limit": refresh_evidence_limit if refresh_missing_evidence else None,
             },
         },
         "readiness": _roll_up_readiness(people),

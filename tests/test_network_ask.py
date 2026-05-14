@@ -7,9 +7,11 @@ from uuid import uuid4
 from relationship_substrate.cli import main
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
-from relationship_substrate.materialize import materialize_msgvault_correspondence
+from relationship_substrate.materialize import materialize_msgvault_correspondence, materialize_msgvault_senders
+from relationship_substrate.network_ask import prepare_ask_network_packet
 from relationship_substrate.organizations import upsert_organization_enrichment
 from relationship_substrate.repositories import upsert_evidence_ref, upsert_source_event
+from relationship_substrate.cli import ingest_msgvault_sender_rows
 
 
 def _run_cli(monkeypatch, capsys, *args: str) -> dict:
@@ -127,3 +129,71 @@ def test_ask_network_cli_returns_contract_packet_without_model_judgment(
     assert person_packet["model_inputs"]["goal"] == packet["query"]["goal"]
     assert evidence_ref_id in person_packet["model_inputs"]["candidate_evidence_refs"]
     assert "draft_email" not in person_packet
+
+
+def test_ask_network_refreshes_missing_evidence_and_rebuilds_packet(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    unique_count = 700_000 + int(run_id[:6], 16)
+    domain = f"ask-refresh-{run_id}.example"
+    email = f"aggregate-only@{domain}"
+    ingest_msgvault_sender_rows(
+        database_url,
+        [{"email": email, "display_name": "Aggregate Only", "message_count": 25}],
+        self_aliases=set(),
+        skipped_domains=set(),
+    )
+    materialize_msgvault_senders(database_url)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_consulting_firm",
+        employee_count_min=unique_count,
+        employee_count_max=unique_count,
+        employee_count_label="unique test team count",
+        consultant_count_estimate=unique_count,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+    calls: list[tuple[str, int]] = []
+
+    def refresh_missing_evidence(*, email: str, limit: int) -> dict:
+        calls.append((email, limit))
+        evidence_ref_id = _relationship_evidence(database_url, email=email)
+        return {
+            "source": "test_refresh",
+            "relationship_email": email,
+            "events_upserted": 1,
+            "evidence_ref_id": evidence_ref_id,
+        }
+
+    packet = prepare_ask_network_packet(
+        database_url,
+        goal="Find relationship-backed consultants.",
+        actual_employee_count_min=unique_count,
+        actual_employee_count_max=unique_count,
+        consultant_count_min=unique_count,
+        consultant_count_max=unique_count,
+        limit=1,
+        evidence_limit=3,
+        refresh_missing_evidence=refresh_missing_evidence,
+        refresh_evidence_limit=7,
+    )
+
+    assert calls == [(email, 7)]
+    person_packet = packet["people"][0]
+    assert person_packet["email"] == email
+    assert person_packet["evidence_summary"]["evidence_ref_count"] == 1
+    assert person_packet["packet_readiness"]["ready_for_model_ranking"] is True
+    assert {
+        "type": "msgvault_correspondence",
+        "email": email,
+        "limit": 7,
+        "result": {
+            "source": "test_refresh",
+            "relationship_email": email,
+            "events_upserted": 1,
+            "evidence_ref_id": person_packet["model_inputs"]["candidate_evidence_refs"][0],
+        },
+    } in person_packet["packet_readiness"]["refresh_actions"]
+    assert packet["readiness"]["refresh_actions"] == person_packet["packet_readiness"]["refresh_actions"]
