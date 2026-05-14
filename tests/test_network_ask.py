@@ -4,14 +4,16 @@ import json
 import sys
 from uuid import uuid4
 
+import pytest
+
 from relationship_substrate.cli import main
+from relationship_substrate.cli import ingest_msgvault_sender_rows
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
 from relationship_substrate.materialize import materialize_msgvault_correspondence, materialize_msgvault_senders
-from relationship_substrate.network_ask import prepare_ask_network_packet
+from relationship_substrate.network_ask import prepare_ask_network_packet, validate_ask_network_recommendations
 from relationship_substrate.organizations import upsert_organization_enrichment
 from relationship_substrate.repositories import upsert_evidence_ref, upsert_source_event
-from relationship_substrate.cli import ingest_msgvault_sender_rows
 
 
 def _run_cli(monkeypatch, capsys, *args: str) -> dict:
@@ -251,3 +253,191 @@ def test_eval_ask_network_cli_reports_contract_checks(database_url, monkeypatch,
     assert checks["relationship_evidence"]["passed"] is True
     assert checks["readiness_warnings_visible"]["passed"] is True
     assert checks["no_code_generated_draft"]["passed"] is True
+
+
+def test_validate_ask_network_recommendations_accepts_model_ranking_without_rewriting(
+    database_url,
+):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    unique_count = 1_100_000 + int(run_id[:6], 16)
+    domain = f"ask-rec-{run_id}.example"
+    email = f"consultant@{domain}"
+    evidence_ref_id = _relationship_evidence(database_url, email=email)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_consulting_firm",
+        employee_count_min=unique_count,
+        employee_count_max=unique_count,
+        consultant_count_estimate=unique_count,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+    packet = prepare_ask_network_packet(
+        database_url,
+        goal="Find consultants at small firms.",
+        actual_employee_count_min=unique_count,
+        actual_employee_count_max=unique_count,
+        consultant_count_min=unique_count,
+        consultant_count_max=unique_count,
+        limit=1,
+        research_context={"sources": [{"id": "current-news", "url": "https://example.com/news"}]},
+        evidence_limit=3,
+    )
+    recommendation = {
+        "person_email": email,
+        "priority": "model-ranked-high",
+        "goal_fit_rationale": "Model-authored goal fit.",
+        "relationship_rationale": "Model-authored relationship rationale.",
+        "relationship_risk_or_caution": "Model-authored caution.",
+        "best_angle": "Model-authored angle.",
+        "next_action": "Model-authored next action.",
+        "draft_email": {"subject": "Model subject", "body": "Model body"},
+        "cited_evidence_refs": [evidence_ref_id],
+        "cited_research_refs": ["current-news"],
+    }
+
+    validated = validate_ask_network_recommendations(packet, [recommendation])
+
+    assert validated == [recommendation]
+
+
+def test_validate_ask_network_recommendations_rejects_unknown_refs(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    unique_count = 1_200_000 + int(run_id[:6], 16)
+    domain = f"ask-rec-invalid-{run_id}.example"
+    email = f"consultant@{domain}"
+    _relationship_evidence(database_url, email=email)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_consulting_firm",
+        employee_count_min=unique_count,
+        employee_count_max=unique_count,
+        consultant_count_estimate=unique_count,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+    packet = prepare_ask_network_packet(
+        database_url,
+        goal="Find consultants at small firms.",
+        actual_employee_count_min=unique_count,
+        actual_employee_count_max=unique_count,
+        consultant_count_min=unique_count,
+        consultant_count_max=unique_count,
+        limit=1,
+        research_context={"sources": [{"id": "known-news", "url": "https://example.com/news"}]},
+        evidence_limit=3,
+    )
+
+    with pytest.raises(ValueError, match="cited_evidence_refs"):
+        validate_ask_network_recommendations(
+            packet,
+            [
+                {
+                    "person_email": email,
+                    "priority": "model-ranked-high",
+                    "goal_fit_rationale": "Model-authored goal fit.",
+                    "relationship_rationale": "Model-authored relationship rationale.",
+                    "relationship_risk_or_caution": "Model-authored caution.",
+                    "best_angle": "Model-authored angle.",
+                    "next_action": "Model-authored next action.",
+                    "draft_email": {"subject": "Model subject", "body": "Model body"},
+                    "cited_evidence_refs": ["missing-evidence"],
+                    "cited_research_refs": ["known-news"],
+                }
+            ],
+        )
+
+
+def test_ask_network_cli_validates_model_recommendation_file(
+    database_url,
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    unique_count = 1_300_000 + int(run_id[:6], 16)
+    domain = f"ask-rec-cli-{run_id}.example"
+    email = f"consultant@{domain}"
+    evidence_ref_id = _relationship_evidence(database_url, email=email)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_consulting_firm",
+        employee_count_min=unique_count,
+        employee_count_max=unique_count,
+        consultant_count_estimate=unique_count,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+    research_path = tmp_path / "research.json"
+    research_path.write_text(
+        json.dumps({"sources": [{"id": "cli-news", "url": "https://example.com/cli-news"}]}),
+        encoding="utf-8",
+    )
+    model_proposal_path = tmp_path / "recommendations.json"
+    recommendation = {
+        "person_email": email,
+        "priority": "model-ranked-high",
+        "goal_fit_rationale": "Model-authored goal fit.",
+        "relationship_rationale": "Model-authored relationship rationale.",
+        "relationship_risk_or_caution": "Model-authored caution.",
+        "best_angle": "Model-authored angle.",
+        "next_action": "Model-authored next action.",
+        "draft_email": {"subject": "Model subject", "body": "Model body"},
+        "cited_evidence_refs": [evidence_ref_id],
+        "cited_research_refs": ["cli-news"],
+    }
+    model_proposal_path.write_text(json.dumps([recommendation]), encoding="utf-8")
+
+    packet = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "ask-network",
+        "--goal",
+        "Find consultants at small firms.",
+        "--actual-employee-count-min",
+        str(unique_count),
+        "--actual-employee-count-max",
+        str(unique_count),
+        "--consultant-count-min",
+        str(unique_count),
+        "--consultant-count-max",
+        str(unique_count),
+        "--limit",
+        "1",
+        "--research-context",
+        str(research_path),
+        "--model-proposal",
+        str(model_proposal_path),
+    )
+
+    assert packet["model_recommendation_validation"] == {
+        "valid": True,
+        "ranked_recommendations": [recommendation],
+    }
+
+    with pytest.raises(ValueError, match="cited_research_refs"):
+        validate_ask_network_recommendations(
+            packet,
+            [
+                {
+                    "person_email": email,
+                    "priority": "model-ranked-high",
+                    "goal_fit_rationale": "Model-authored goal fit.",
+                    "relationship_rationale": "Model-authored relationship rationale.",
+                    "relationship_risk_or_caution": "Model-authored caution.",
+                    "best_angle": "Model-authored angle.",
+                    "next_action": "Model-authored next action.",
+                    "draft_email": {"subject": "Model subject", "body": "Model body"},
+                    "cited_evidence_refs": [],
+                    "cited_research_refs": ["missing-research"],
+                }
+            ],
+        )

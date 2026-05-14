@@ -35,7 +35,8 @@ relationship-substrate ask-network \
   --prior-state-limit 3 \
   --refresh-missing-evidence \
   --refresh-evidence-limit 50 \
-  --research-context path/to/research.json
+  --research-context path/to/research.json \
+  --model-proposal path/to/model-recommendations.json
 ```
 
 `--goal` is always required. Structured constraints are optional but preferred when the user has stated a numeric or operational requirement. Code must not infer hidden numeric filters from the goal string in v1.
@@ -331,6 +332,19 @@ Validation rules:
 - `cited_research_refs` must exist in supplied research context.
 - At least one cited evidence or research ref is required.
 - Extra fields are rejected unless the contract version changes.
+
+When `--model-proposal` is supplied, the CLI validates a list of these proposals and attaches:
+
+```json
+{
+  "model_recommendation_validation": {
+    "valid": true,
+    "ranked_recommendations": []
+  }
+}
+```
+
+The list order is model-owned ranking. Code preserves that order and validates only schema, person membership, and citations.
 
 ## Research Context
 

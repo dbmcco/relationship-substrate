@@ -3,10 +3,33 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
 from relationship_substrate.outreach import prepare_history_backed_outreach_proposal_packet
 
 
 ASK_NETWORK_CONTRACT_VERSION = 1
+
+
+class AskNetworkRecommendation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    person_email: str = Field(min_length=1)
+    priority: str = Field(min_length=1)
+    goal_fit_rationale: str = Field(min_length=1)
+    relationship_rationale: str = Field(min_length=1)
+    relationship_risk_or_caution: str = Field(min_length=1)
+    best_angle: str = Field(min_length=1)
+    next_action: str = Field(min_length=1)
+    draft_email: dict[str, Any] = Field(min_length=1)
+    cited_evidence_refs: list[str] = Field(default_factory=list)
+    cited_research_refs: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _requires_at_least_one_citation(self) -> "AskNetworkRecommendation":
+        if not self.cited_evidence_refs and not self.cited_research_refs:
+            raise ValueError("ask-network recommendation must cite evidence or research refs")
+        return self
 
 
 def _research_refs(value: Any) -> set[str]:
@@ -30,6 +53,25 @@ def _evidence_ref_ids(relationship_intelligence: dict[str, Any]) -> list[str]:
         ref_id = str(evidence.get("id") or "").strip()
         if ref_id:
             refs.append(ref_id)
+    return refs
+
+
+def _available_evidence_refs(packet: dict[str, Any]) -> set[str]:
+    refs: set[str] = set()
+    for person in packet.get("people", []):
+        for ref in (person.get("model_inputs") or {}).get("candidate_evidence_refs", []):
+            normalized_ref = str(ref or "").strip()
+            if normalized_ref:
+                refs.add(normalized_ref)
+        relationship_intelligence = person.get("relationship_intelligence") or {}
+        for evidence in relationship_intelligence.get("evidence", []):
+            ref_id = str(evidence.get("id") or "").strip()
+            if ref_id:
+                refs.add(ref_id)
+            ref_type = str(evidence.get("ref_type") or "").strip()
+            ref_value = str(evidence.get("ref_value") or "").strip()
+            if ref_type and ref_value:
+                refs.add(f"{ref_type}:{ref_value}")
     return refs
 
 
@@ -444,3 +486,39 @@ def evaluate_ask_network_packet(packet: dict[str, Any]) -> dict[str, Any]:
         "checks": checks,
         "packet": packet,
     }
+
+
+def validate_ask_network_recommendations(
+    packet: dict[str, Any],
+    recommendations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    packet_emails = {
+        str(person.get("email") or "").strip().lower()
+        for person in packet.get("people", [])
+    }
+    evidence_refs = _available_evidence_refs(packet)
+    research_refs = _research_refs(packet.get("research_context"))
+    validated: list[dict[str, Any]] = []
+    for recommendation in recommendations:
+        try:
+            parsed = AskNetworkRecommendation.model_validate(recommendation)
+        except ValueError as exc:
+            raise ValueError(f"invalid ask-network recommendation: {exc}") from exc
+
+        if parsed.person_email.strip().lower() not in packet_emails:
+            raise ValueError("person_email is not present in the ask-network packet")
+
+        missing_evidence_refs = [
+            ref for ref in parsed.cited_evidence_refs if ref not in evidence_refs
+        ]
+        if missing_evidence_refs:
+            raise ValueError(f"cited_evidence_refs not supplied by packet: {missing_evidence_refs}")
+
+        missing_research_refs = [
+            ref for ref in parsed.cited_research_refs if ref not in research_refs
+        ]
+        if missing_research_refs:
+            raise ValueError(f"cited_research_refs not supplied by packet: {missing_research_refs}")
+
+        validated.append(parsed.model_dump(mode="json"))
+    return validated

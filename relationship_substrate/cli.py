@@ -31,7 +31,11 @@ from relationship_substrate.materialize import (
     materialize_msgvault_correspondence,
     materialize_msgvault_senders,
 )
-from relationship_substrate.network_ask import evaluate_ask_network_packet, prepare_ask_network_packet
+from relationship_substrate.network_ask import (
+    evaluate_ask_network_packet,
+    prepare_ask_network_packet,
+    validate_ask_network_recommendations,
+)
 from relationship_substrate.organizations import (
     history_backed_organization_worklist,
     import_organization_enrichments,
@@ -133,6 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
     ask_network.add_argument("--consultant-count-max", type=int, default=None)
     ask_network.add_argument("--limit", type=int, default=10)
     ask_network.add_argument("--research-context", default=None)
+    ask_network.add_argument("--model-proposal", default=None)
     ask_network.add_argument("--evidence-limit", type=int, default=10)
     ask_network.add_argument("--prior-state-limit", type=int, default=3)
     ask_network.add_argument("--refresh-missing-evidence", action="store_true")
@@ -145,6 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_ask_network.add_argument("--consultant-count-max", type=int, default=None)
     eval_ask_network.add_argument("--limit", type=int, default=10)
     eval_ask_network.add_argument("--research-context", default=None)
+    eval_ask_network.add_argument("--model-proposal", default=None)
     eval_ask_network.add_argument("--evidence-limit", type=int, default=10)
     eval_ask_network.add_argument("--prior-state-limit", type=int, default=3)
     eval_ask_network.add_argument("--refresh-missing-evidence", action="store_true")
@@ -700,22 +706,30 @@ def main() -> int:
                     "ingestion": ingestion,
                     "materialization": materialization,
                 }
-        _print_json(
-            prepare_ask_network_packet(
-                settings.database_url,
-                goal=args.goal,
-                actual_employee_count_min=args.actual_employee_count_min,
-                actual_employee_count_max=args.actual_employee_count_max,
-                consultant_count_min=args.consultant_count_min,
-                consultant_count_max=args.consultant_count_max,
-                limit=args.limit,
-                research_context=research_context,
-                evidence_limit=args.evidence_limit,
-                prior_state_limit=args.prior_state_limit,
-                refresh_missing_evidence=refresh_missing_evidence,
-                refresh_evidence_limit=args.refresh_evidence_limit,
-            )
+        packet = prepare_ask_network_packet(
+            settings.database_url,
+            goal=args.goal,
+            actual_employee_count_min=args.actual_employee_count_min,
+            actual_employee_count_max=args.actual_employee_count_max,
+            consultant_count_min=args.consultant_count_min,
+            consultant_count_max=args.consultant_count_max,
+            limit=args.limit,
+            research_context=research_context,
+            evidence_limit=args.evidence_limit,
+            prior_state_limit=args.prior_state_limit,
+            refresh_missing_evidence=refresh_missing_evidence,
+            refresh_evidence_limit=args.refresh_evidence_limit,
         )
+        if args.model_proposal:
+            recommendations = json.loads(Path(args.model_proposal).read_text(encoding="utf-8"))
+            packet["model_recommendation_validation"] = {
+                "valid": True,
+                "ranked_recommendations": validate_ask_network_recommendations(
+                    packet,
+                    recommendations,
+                ),
+            }
+        _print_json(packet)
         return 0
     if args.command == "eval-ask-network":
         run_migrations(settings.database_url)
@@ -745,6 +759,15 @@ def main() -> int:
             refresh_missing_evidence=refresh_missing_evidence,
             refresh_evidence_limit=args.refresh_evidence_limit,
         )
+        if args.model_proposal:
+            recommendations = json.loads(Path(args.model_proposal).read_text(encoding="utf-8"))
+            packet["model_recommendation_validation"] = {
+                "valid": True,
+                "ranked_recommendations": validate_ask_network_recommendations(
+                    packet,
+                    recommendations,
+                ),
+            }
         _print_json(evaluate_ask_network_packet(packet))
         return 0
     if args.command == "persist-relationship-state":
