@@ -37,6 +37,10 @@ from relationship_substrate.organizations import (
     organization_enrichment_worklist,
     upsert_organization_enrichment,
 )
+from relationship_substrate.relationship_intelligence import (
+    persist_relationship_state,
+    prepare_relationship_intelligence_packet,
+)
 from relationship_substrate.repositories import (
     identity_candidate_counts,
     operating_picture_rows,
@@ -91,6 +95,12 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_candidate.add_argument("--note", required=True)
     show_person = subparsers.add_parser("show-person")
     show_person.add_argument("--email", required=True)
+    prepare_intelligence = subparsers.add_parser("prepare-relationship-intelligence")
+    prepare_intelligence.add_argument("--email", required=True)
+    prepare_intelligence.add_argument("--evidence-limit", type=int, default=10)
+    persist_state = subparsers.add_parser("persist-relationship-state")
+    persist_state.add_argument("--email", required=True)
+    persist_state.add_argument("--proposal", required=True)
     search = subparsers.add_parser("search-people")
     search.add_argument("--role-keywords", default=",".join(DEFAULT_ROLE_KEYWORDS))
     search.add_argument("--known-people-at-company-min", "--company-size-min", type=int, default=None)
@@ -538,6 +548,21 @@ def main() -> int:
         return 0
     if args.command == "show-person":
         _print_json(get_person_dossier(settings.database_url, email=args.email))
+        return 0
+    if args.command == "prepare-relationship-intelligence":
+        run_migrations(settings.database_url)
+        _print_json(
+            prepare_relationship_intelligence_packet(
+                settings.database_url,
+                email=args.email,
+                evidence_limit=args.evidence_limit,
+            )
+        )
+        return 0
+    if args.command == "persist-relationship-state":
+        run_migrations(settings.database_url)
+        proposal = json.loads(Path(args.proposal).read_text(encoding="utf-8"))
+        _print_json(persist_relationship_state(settings.database_url, email=args.email, proposal=proposal))
         return 0
     if args.command == "embed-curated-contacts":
         run_migrations(settings.database_url)
