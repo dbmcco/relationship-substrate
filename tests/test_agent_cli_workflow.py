@@ -739,3 +739,41 @@ def test_agent_cli_exports_history_backed_organization_worklist(
         "1000",
     )
     assert any(item["company_name"] == company for item in missing_only_report["companies"])
+
+
+def test_agent_cli_prepares_relationship_tone_tenor_analysis_packet(database_url, monkeypatch, capsys):
+    run_migrations(database_url)
+    email = f"tone-cli-{uuid4().hex}@example.com"
+
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.person (
+                  display_name, primary_email, source_posture, provenance_status
+                )
+                VALUES (%s, %s, 'direct_interaction', 'test')
+                ON CONFLICT (primary_email)
+                DO UPDATE SET display_name = EXCLUDED.display_name
+                """,
+                ("Tone CLI Person", email),
+            )
+        conn.commit()
+
+    packet = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "prepare-relationship-tone-analysis",
+        "--email",
+        email,
+        "--evidence-limit",
+        "3",
+        "--prior-state-limit",
+        "2",
+    )
+
+    assert packet["analysis_stage"] == "relationship_tone_tenor"
+    assert packet["count"] == 1
+    assert packet["people"][0]["email"] == email

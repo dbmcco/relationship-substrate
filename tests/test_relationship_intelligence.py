@@ -9,6 +9,7 @@ from relationship_substrate.db import run_migrations
 from relationship_substrate.dossiers import get_person_dossier
 from relationship_substrate.materialize import materialize_msgvault_correspondence
 from relationship_substrate.relationship_intelligence import (
+    prepare_relationship_tone_tenor_analysis_packet,
     prepare_relationship_intelligence_packet,
     persist_relationship_state,
 )
@@ -165,3 +166,55 @@ def test_persisted_relationship_state_is_evidence_backed_and_visible_in_dossier(
     assert dossier["relationship_states"][0]["id"] == state["id"]
     assert dossier["relationship_states"][0]["summary"] == "Model-proposed tone/tenor summary."
     assert dossier["relationship_states"][0]["evidence_refs"] == [{"id": evidence_ref_id}]
+
+
+def test_prepare_relationship_tone_tenor_analysis_packet_batches_people_with_prior_tone_states(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    email = f"tone-packet-{run_id}@example.com"
+    evidence_ref_id = _insert_correspondence_evidence(
+        database_url,
+        email=email,
+        message_id="1",
+        subject="Follow-up note",
+        snippet="Appreciate your thoughtful feedback and direct communication.",
+    )
+    materialize_msgvault_correspondence(database_url)
+    persist_relationship_state(
+        database_url,
+        email=email,
+        proposal={
+            "state_kind": "relationship_tone_tenor",
+            "summary": "Tone state that should be included.",
+            "rationale": "Evidence-backed model interpretation.",
+            "evidence_refs": [{"id": evidence_ref_id}],
+        },
+    )
+    persist_relationship_state(
+        database_url,
+        email=email,
+        proposal={
+            "state_kind": "relationship_next_action",
+            "summary": "Different state kind should not be included.",
+            "rationale": "Not part of tone/tenor history.",
+            "evidence_refs": [{"id": evidence_ref_id}],
+        },
+    )
+
+    packet = prepare_relationship_tone_tenor_analysis_packet(
+        database_url,
+        emails=[email],
+        evidence_limit=5,
+        prior_state_limit=1,
+    )
+
+    assert packet["analysis_stage"] == "relationship_tone_tenor"
+    assert packet["count"] == 1
+    assert packet["model_contract"]["owner"] == "model"
+    assert "deterministic tone classifier" in packet["model_contract"]["code_must_not"]
+    person_packet = packet["people"][0]
+    assert person_packet["email"] == email
+    assert person_packet["relationship_intelligence"]["person"]["primary_email"] == email
+    assert person_packet["relationship_intelligence"]["evidence"][0]["id"] == evidence_ref_id
+    assert len(person_packet["prior_tone_tenor_states"]) == 1
+    assert person_packet["prior_tone_tenor_states"][0]["state_kind"] == "relationship_tone_tenor"

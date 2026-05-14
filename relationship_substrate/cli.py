@@ -42,6 +42,7 @@ from relationship_substrate.outreach import prepare_outreach_proposal_packet, va
 from relationship_substrate.relationship_intelligence import (
     persist_relationship_state,
     prepare_relationship_intelligence_packet,
+    prepare_relationship_tone_tenor_analysis_packet,
 )
 from relationship_substrate.repositories import (
     identity_candidate_counts,
@@ -100,6 +101,10 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_intelligence = subparsers.add_parser("prepare-relationship-intelligence")
     prepare_intelligence.add_argument("--email", required=True)
     prepare_intelligence.add_argument("--evidence-limit", type=int, default=10)
+    prepare_tone_analysis = subparsers.add_parser("prepare-relationship-tone-analysis")
+    prepare_tone_analysis.add_argument("--email", action="append", required=True)
+    prepare_tone_analysis.add_argument("--evidence-limit", type=int, default=10)
+    prepare_tone_analysis.add_argument("--prior-state-limit", type=int, default=3)
     prepare_outreach = subparsers.add_parser("prepare-outreach-proposal")
     prepare_outreach.add_argument("--email", action="append", required=True)
     prepare_outreach.add_argument("--research-context", default=None)
@@ -585,6 +590,17 @@ def main() -> int:
                 settings.database_url,
                 email=args.email,
                 evidence_limit=args.evidence_limit,
+            )
+        )
+        return 0
+    if args.command == "prepare-relationship-tone-analysis":
+        run_migrations(settings.database_url)
+        _print_json(
+            prepare_relationship_tone_tenor_analysis_packet(
+                settings.database_url,
+                emails=args.email,
+                evidence_limit=args.evidence_limit,
+                prior_state_limit=args.prior_state_limit,
             )
         )
         return 0
