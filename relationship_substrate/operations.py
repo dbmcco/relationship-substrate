@@ -16,7 +16,11 @@ from relationship_substrate.adapters.next_up import iter_next_up_events
 from relationship_substrate.config import Settings
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
-from relationship_substrate.embeddings import embed_curated_contacts
+from relationship_substrate.embeddings import (
+    embed_curated_contacts,
+    embed_missing_organizations,
+    embed_missing_people,
+)
 from relationship_substrate.identity import generate_identity_candidates
 from relationship_substrate.materialize import (
     materialize_calendar_events,
@@ -545,6 +549,47 @@ def _materialize_existing(settings: Settings) -> dict[str, object]:
     }
 
 
+def _embed_existing_entities(
+    database_url: str,
+    *,
+    embed_texts: EmbedTexts,
+    embed_provider: str,
+    embed_model: str | None,
+    embed_limit: int | None,
+) -> dict[str, object]:
+    queues = {
+        "curated_contacts": embed_curated_contacts(
+            database_url,
+            embed_texts=embed_texts,
+            provider_name=embed_provider,
+            model=embed_model,
+            limit=embed_limit,
+        ),
+        "people": embed_missing_people(
+            database_url,
+            embed_texts=embed_texts,
+            provider_name=embed_provider,
+            model=embed_model,
+            limit=embed_limit,
+        ),
+        "organizations": embed_missing_organizations(
+            database_url,
+            embed_texts=embed_texts,
+            provider_name=embed_provider,
+            model=embed_model,
+            limit=embed_limit,
+        ),
+    }
+    return {
+        "source": "substrate_entities",
+        "provider": embed_provider,
+        "model": embed_model or "",
+        "candidates": sum(int(result.get("candidates") or 0) for result in queues.values()),
+        "embedded": sum(int(result.get("embedded") or 0) for result in queues.values()),
+        "queues": queues,
+    }
+
+
 def run_autonomous_backfill(
     settings: Settings,
     *,
@@ -575,12 +620,12 @@ def run_autonomous_backfill(
         embedding_result: dict[str, object] = {"skipped": True}
         semantic_query_embedding = None
         if not skip_embeddings and embed_texts is not None:
-            embedding_result = embed_curated_contacts(
+            embedding_result = _embed_existing_entities(
                 settings.database_url,
                 embed_texts=embed_texts,
-                provider_name=embed_provider,
-                model=embed_model,
-                limit=embed_limit,
+                embed_provider=embed_provider,
+                embed_model=embed_model,
+                embed_limit=embed_limit,
             )
             semantic_query_embedding = embed_texts([north_star_semantic_query])[0]
         status = substrate_status(
@@ -748,12 +793,12 @@ def run_network_pipeline(
     embedding_result: dict[str, object] = {"skipped": skip_embeddings}
     semantic_query_embedding = None
     if not skip_embeddings and embed_texts is not None:
-        embedding_result = embed_curated_contacts(
+        embedding_result = _embed_existing_entities(
             settings.database_url,
             embed_texts=embed_texts,
-            provider_name=embed_provider,
-            model=embed_model,
-            limit=embed_limit,
+            embed_provider=embed_provider,
+            embed_model=embed_model,
+            embed_limit=embed_limit,
         )
         semantic_query_embedding = embed_texts([north_star_semantic_query])[0]
 

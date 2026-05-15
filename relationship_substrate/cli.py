@@ -15,6 +15,8 @@ from relationship_substrate.embeddings import (
     DEFAULT_OLLAMA_EMBEDDING_MODEL,
     DEFAULT_OPENAI_EMBEDDING_MODEL,
     embed_curated_contacts,
+    embed_missing_organizations,
+    embed_missing_people,
     hash_embed_texts,
     ollama_embed_texts,
     openai_embed_texts,
@@ -209,6 +211,14 @@ def build_parser() -> argparse.ArgumentParser:
     embed.add_argument("--provider", choices=["ollama", "openai", "hash"], default="ollama")
     embed.add_argument("--model", default=None)
     embed.add_argument("--limit", type=int, default=None)
+    embed_people = subparsers.add_parser("embed-missing-people")
+    embed_people.add_argument("--provider", choices=["ollama", "openai", "hash"], default="ollama")
+    embed_people.add_argument("--model", default=None)
+    embed_people.add_argument("--limit", type=int, default=None)
+    embed_orgs = subparsers.add_parser("embed-missing-organizations")
+    embed_orgs.add_argument("--provider", choices=["ollama", "openai", "hash"], default="ollama")
+    embed_orgs.add_argument("--model", default=None)
+    embed_orgs.add_argument("--limit", type=int, default=None)
     org = subparsers.add_parser("upsert-organization-enrichment")
     org.add_argument("--company", required=True)
     org.add_argument("--domain", default=None)
@@ -903,6 +913,30 @@ def main() -> int:
         run_migrations(settings.database_url)
         _print_json(
             embed_curated_contacts(
+                settings.database_url,
+                embed_texts=_embedding_function(args.provider, model=args.model),
+                provider_name=args.provider,
+                model=_embedding_model(args.provider, args.model),
+                limit=args.limit,
+            )
+        )
+        return 0
+    if args.command == "embed-missing-people":
+        run_migrations(settings.database_url)
+        _print_json(
+            embed_missing_people(
+                settings.database_url,
+                embed_texts=_embedding_function(args.provider, model=args.model),
+                provider_name=args.provider,
+                model=_embedding_model(args.provider, args.model),
+                limit=args.limit,
+            )
+        )
+        return 0
+    if args.command == "embed-missing-organizations":
+        run_migrations(settings.database_url)
+        _print_json(
+            embed_missing_organizations(
                 settings.database_url,
                 embed_texts=_embedding_function(args.provider, model=args.model),
                 provider_name=args.provider,

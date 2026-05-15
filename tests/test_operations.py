@@ -320,34 +320,36 @@ def test_run_autonomous_backfill_stops_when_embedding_queue_is_idle(database_url
     run_migrations(database_url)
     embedding_calls: list[int | None] = []
 
-    def fake_embed_curated_contacts(
+    def fake_embed_existing_entities(
         database_url: str,
         *,
         embed_texts,
-        provider_name: str,
-        model: str | None,
-        limit: int | None,
+        embed_provider: str,
+        embed_model: str | None,
+        embed_limit: int | None,
     ) -> dict[str, object]:
-        embedding_calls.append(limit)
+        embedding_calls.append(embed_limit)
         if len(embedding_calls) == 1:
             return {
-                "source": "next_up",
-                "provider": provider_name,
-                "model": model or "",
+                "source": "substrate_entities",
+                "provider": embed_provider,
+                "model": embed_model or "",
                 "candidates": 1,
                 "embedded": 1,
+                "queues": {},
             }
         return {
-            "source": "next_up",
-            "provider": provider_name,
-            "model": model or "",
+            "source": "substrate_entities",
+            "provider": embed_provider,
+            "model": embed_model or "",
             "candidates": 0,
             "embedded": 0,
+            "queues": {},
         }
 
     monkeypatch.setattr(
-        "relationship_substrate.operations.embed_curated_contacts",
-        fake_embed_curated_contacts,
+        "relationship_substrate.operations._embed_existing_entities",
+        fake_embed_existing_entities,
     )
 
     report = run_autonomous_backfill(
