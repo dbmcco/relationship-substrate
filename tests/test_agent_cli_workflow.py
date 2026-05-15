@@ -77,7 +77,7 @@ def test_agent_cli_ingests_materializes_and_exports_from_db(
         "export-operating-picture",
         "--from-db",
         "--limit",
-        "1000",
+        "100000",
     )
     assert picture["relationships"]
     relationship = next(

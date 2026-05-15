@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -25,6 +26,7 @@ from relationship_substrate.materialize import (
 )
 from relationship_substrate.network_ask import (
     evaluate_ask_network_packet,
+    prepare_ask_network_packet,
     tone_state_worklist_from_ask_packet,
     validate_ask_network_recommendations,
 )
@@ -524,6 +526,130 @@ def evaluate_non_ui_workflow(
         "tone_state_worklist": tone_worklist,
         "substrate_status": status,
     }
+
+
+def _materialize_existing(settings: Settings) -> dict[str, object]:
+    return {
+        "exact_emails": materialize_exact_emails(
+            settings.database_url,
+            source_name="next_up",
+            skipped_domains=set(settings.skipped_sender_domains),
+        ),
+        "msgvault_senders": materialize_msgvault_senders(settings.database_url),
+        "msgvault_correspondence": materialize_msgvault_correspondence(settings.database_url),
+        "calendar_events": materialize_calendar_events(
+            settings.database_url,
+            self_aliases=set(settings.self_email_aliases),
+            skipped_domains=set(settings.skipped_sender_domains),
+        ),
+    }
+
+
+def run_autonomous_backfill(
+    settings: Settings,
+    *,
+    output_dir: Path,
+    max_iterations: int = 1,
+    sleep_seconds: int = 0,
+    skip_embeddings: bool = False,
+    embed_texts: EmbedTexts | None = None,
+    embed_provider: str = "ollama",
+    embed_model: str | None = None,
+    embed_limit: int | None = 500,
+    organization_worklist_limit: int = 100,
+    north_star_limit: int = 25,
+    north_star_semantic_query: str = DEFAULT_NORTH_STAR_SEMANTIC_QUERY,
+) -> dict[str, object]:
+    if max_iterations < 1:
+        raise ValueError("max_iterations must be at least 1")
+    run_started_at = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = output_dir / run_started_at
+    run_migrations(settings.database_url)
+    iterations: list[dict[str, object]] = []
+    final_status: dict[str, object] | None = None
+    for index in range(max_iterations):
+        iteration_started_at = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        iteration_dir = run_dir / f"iteration-{index + 1:03d}-{iteration_started_at}"
+        artifacts: dict[str, str] = {}
+        materialization = _materialize_existing(settings)
+        embedding_result: dict[str, object] = {"skipped": True}
+        semantic_query_embedding = None
+        if not skip_embeddings and embed_texts is not None:
+            embedding_result = embed_curated_contacts(
+                settings.database_url,
+                embed_texts=embed_texts,
+                provider_name=embed_provider,
+                model=embed_model,
+                limit=embed_limit,
+            )
+            semantic_query_embedding = embed_texts([north_star_semantic_query])[0]
+        status = substrate_status(
+            settings.database_url,
+            organization_worklist_limit=organization_worklist_limit,
+            skipped_domains=set(settings.skipped_sender_domains),
+            skipped_system_localparts=set(settings.skipped_system_localparts),
+            skipped_system_prefixes=set(settings.skipped_system_prefixes),
+        )
+        ask_packet = prepare_ask_network_packet(
+            settings.database_url,
+            goal=north_star_semantic_query,
+            actual_employee_count_min=10,
+            actual_employee_count_max=20,
+            consultant_count_min=10,
+            consultant_count_max=20,
+            semantic_query=north_star_semantic_query if semantic_query_embedding is not None else None,
+            semantic_query_embedding=semantic_query_embedding,
+            semantic_provider=embed_provider if semantic_query_embedding is not None else None,
+            embedding_model=embed_model if semantic_query_embedding is not None else None,
+            sort="semantic" if semantic_query_embedding is not None else "relationship",
+            limit=north_star_limit,
+        )
+        tone_worklist = tone_state_worklist_from_ask_packet(ask_packet)
+        artifacts["status"] = _write_json(iteration_dir / "substrate_status.json", status)
+        artifacts["ask_network_packet"] = _write_json(iteration_dir / "ask_network_packet.json", ask_packet)
+        artifacts["tone_state_worklist"] = _write_json(
+            iteration_dir / "tone_state_worklist.json",
+            tone_worklist,
+        )
+        iteration_report = {
+            "iteration": index + 1,
+            "started_at": iteration_started_at,
+            "materialization": materialization,
+            "embeddings": embedding_result,
+            "status": {
+                "person_embedding_missing": (
+                    (status.get("embeddings") or {}).get("people") or {}
+                ).get("missing"),
+                "organization_enrichment_missing": (
+                    status.get("organization_enrichment") or {}
+                ).get("missing_worklist_count"),
+                "tone_state_missing_people": (status.get("tone_state") or {}).get("missing_people_count"),
+            },
+            "ask_network_count": ask_packet["count"],
+            "tone_worklist_count": tone_worklist["count"],
+            "artifacts": artifacts,
+        }
+        artifacts["iteration_report"] = _write_json(iteration_dir / "iteration_report.json", iteration_report)
+        iterations.append(iteration_report)
+        final_status = status
+        if (
+            not skip_embeddings
+            and embed_texts is not None
+            and int(embedding_result.get("candidates") or 0) == 0
+        ):
+            break
+        if index + 1 < max_iterations and sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+    report = {
+        "ok": True,
+        "run_started_at": run_started_at,
+        "iterations_completed": len(iterations),
+        "output_dir": str(run_dir),
+        "iterations": iterations,
+        "final_status": final_status or substrate_status(settings.database_url),
+    }
+    report["artifact"] = _write_json(run_dir / "autonomous_backfill_report.json", report)
+    return report
 
 
 def run_network_pipeline(

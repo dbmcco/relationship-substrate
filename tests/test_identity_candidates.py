@@ -107,7 +107,7 @@ def test_operating_picture_rows_include_unresolved_identity_candidate_counts(dat
     _insert_person(database_url, name="Candidate Gamma", email=f"{localpart}@other.example")
     generate_identity_candidates(database_url)
 
-    rows = operating_picture_rows(database_url, limit=1000)
+    rows = operating_picture_rows(database_url, limit=100000)
 
     candidate_rows = [row for row in rows if row["primary_email"] in emails]
     assert candidate_rows

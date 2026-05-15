@@ -12,6 +12,7 @@ from relationship_substrate.materialize import materialize_msgvault_corresponden
 from relationship_substrate.network_ask import prepare_ask_network_packet
 from relationship_substrate.operations import (
     evaluate_non_ui_workflow,
+    run_autonomous_backfill,
     select_correspondence_seed_emails,
     substrate_status,
 )
@@ -291,4 +292,117 @@ def test_eval_non_ui_workflow_cli_reads_json_inputs(monkeypatch, tmp_path, capsy
     assert captured["feedback"] == {"decision": "reviewed"}
     assert captured["feedback_person_email"] == "person@example.com"
     assert captured["feedback_kind"] == "eval_decision"
+    assert '"ok": true' in capsys.readouterr().out
+
+
+def test_run_autonomous_backfill_writes_operational_artifacts(database_url, tmp_path):
+    run_migrations(database_url)
+
+    report = run_autonomous_backfill(
+        Settings(database_url=database_url),
+        output_dir=tmp_path / "autonomous",
+        max_iterations=1,
+        sleep_seconds=0,
+        skip_embeddings=True,
+    )
+
+    assert report["ok"] is True
+    assert report["iterations_completed"] == 1
+    iteration = report["iterations"][0]
+    assert iteration["materialization"]["exact_emails"]["source"] == "next_up"
+    assert Path(iteration["artifacts"]["status"]).exists()
+    assert Path(iteration["artifacts"]["ask_network_packet"]).exists()
+    assert Path(iteration["artifacts"]["tone_state_worklist"]).exists()
+    assert report["final_status"]["status_stage"] == "relationship_substrate_status"
+
+
+def test_run_autonomous_backfill_stops_when_embedding_queue_is_idle(database_url, tmp_path, monkeypatch):
+    run_migrations(database_url)
+    embedding_calls: list[int | None] = []
+
+    def fake_embed_curated_contacts(
+        database_url: str,
+        *,
+        embed_texts,
+        provider_name: str,
+        model: str | None,
+        limit: int | None,
+    ) -> dict[str, object]:
+        embedding_calls.append(limit)
+        if len(embedding_calls) == 1:
+            return {
+                "source": "next_up",
+                "provider": provider_name,
+                "model": model or "",
+                "candidates": 1,
+                "embedded": 1,
+            }
+        return {
+            "source": "next_up",
+            "provider": provider_name,
+            "model": model or "",
+            "candidates": 0,
+            "embedded": 0,
+        }
+
+    monkeypatch.setattr(
+        "relationship_substrate.operations.embed_curated_contacts",
+        fake_embed_curated_contacts,
+    )
+
+    report = run_autonomous_backfill(
+        Settings(database_url=database_url),
+        output_dir=tmp_path / "autonomous",
+        max_iterations=2,
+        sleep_seconds=0,
+        embed_texts=lambda texts: [[1.0, *([0.0] * 1535)] for _ in texts],
+        embed_provider="test",
+        embed_model="test-model",
+        embed_limit=10,
+    )
+
+    assert report["iterations_completed"] == 2
+    assert report["iterations"][0]["embeddings"]["embedded"] >= 1
+    assert report["iterations"][1]["embeddings"]["candidates"] == 0
+    assert embedding_calls == [10, 10]
+
+
+def test_run_autonomous_backfill_cli_passes_bounds(monkeypatch, tmp_path, capsys):
+    from relationship_substrate import cli
+
+    captured: dict[str, object] = {}
+
+    def fake_backfill(settings: Settings, **kwargs: object) -> dict[str, object]:
+        captured["settings"] = settings
+        captured.update(kwargs)
+        return {"ok": True, "iterations_completed": 1}
+
+    monkeypatch.setattr(cli, "run_autonomous_backfill", fake_backfill)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "relationship-substrate",
+            "--database-url",
+            "postgresql://localhost:5432/relationship_substrate_ops_test",
+            "run-autonomous-backfill",
+            "--output-dir",
+            str(tmp_path / "auto"),
+            "--max-iterations",
+            "3",
+            "--sleep-seconds",
+            "2",
+            "--embed-limit",
+            "17",
+            "--skip-embeddings",
+        ],
+    )
+
+    assert cli.main() == 0
+    assert isinstance(captured["settings"], Settings)
+    assert captured["output_dir"] == tmp_path / "auto"
+    assert captured["max_iterations"] == 3
+    assert captured["sleep_seconds"] == 2
+    assert captured["embed_limit"] == 17
+    assert captured["skip_embeddings"] is True
     assert '"ok": true' in capsys.readouterr().out

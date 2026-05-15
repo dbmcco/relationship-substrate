@@ -45,7 +45,13 @@ from relationship_substrate.organizations import (
     organization_enrichment_worklist,
     upsert_organization_enrichment,
 )
-from relationship_substrate.operations import evaluate_non_ui_workflow, run_network_pipeline, substrate_status
+from relationship_substrate.operations import (
+    DEFAULT_NORTH_STAR_SEMANTIC_QUERY,
+    evaluate_non_ui_workflow,
+    run_autonomous_backfill,
+    run_network_pipeline,
+    substrate_status,
+)
 from relationship_substrate.outreach import (
     prepare_history_backed_outreach_proposal_packet,
     prepare_outreach_proposal_packet,
@@ -272,6 +278,17 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline.add_argument("--organization-worklist-limit", type=int, default=100)
     pipeline.add_argument("--north-star-limit", type=int, default=25)
     pipeline.add_argument("--north-star-semantic-query", default=None)
+    autonomous = subparsers.add_parser("run-autonomous-backfill")
+    autonomous.add_argument("--output-dir", default="output/autonomous")
+    autonomous.add_argument("--max-iterations", type=int, default=1)
+    autonomous.add_argument("--sleep-seconds", type=int, default=0)
+    autonomous.add_argument("--skip-embeddings", action="store_true")
+    autonomous.add_argument("--embed-provider", choices=["ollama", "openai", "hash"], default="ollama")
+    autonomous.add_argument("--embedding-model", default=None)
+    autonomous.add_argument("--embed-limit", type=int, default=500)
+    autonomous.add_argument("--organization-worklist-limit", type=int, default=100)
+    autonomous.add_argument("--north-star-limit", type=int, default=25)
+    autonomous.add_argument("--north-star-semantic-query", default=None)
     return parser
 
 
@@ -1133,7 +1150,31 @@ def main() -> int:
                 organization_worklist_limit=args.organization_worklist_limit,
                 north_star_limit=args.north_star_limit,
                 north_star_semantic_query=args.north_star_semantic_query
-                or "consulting background in medcoms medical communications business consulting supply chain pharma small consulting team",
+                or DEFAULT_NORTH_STAR_SEMANTIC_QUERY,
+            )
+        )
+        return 0
+    if args.command == "run-autonomous-backfill":
+        embed_texts = None
+        embed_model = None
+        if not args.skip_embeddings:
+            embed_model = _embedding_model(args.embed_provider, args.embedding_model)
+            embed_texts = _embedding_function(args.embed_provider, model=args.embedding_model)
+        _print_json(
+            run_autonomous_backfill(
+                settings,
+                output_dir=Path(args.output_dir),
+                max_iterations=args.max_iterations,
+                sleep_seconds=args.sleep_seconds,
+                skip_embeddings=args.skip_embeddings,
+                embed_texts=embed_texts,
+                embed_provider=args.embed_provider,
+                embed_model=embed_model,
+                embed_limit=args.embed_limit,
+                organization_worklist_limit=args.organization_worklist_limit,
+                north_star_limit=args.north_star_limit,
+                north_star_semantic_query=args.north_star_semantic_query
+                or DEFAULT_NORTH_STAR_SEMANTIC_QUERY,
             )
         )
         return 0
