@@ -35,6 +35,27 @@ def _clean_text(value: object) -> str:
     return str(value or "").strip()
 
 
+def _clean_lookup_value(value: object) -> str:
+    return _clean_text(value).lower()
+
+
+def _clean_aliases(values: object) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, list | tuple | set):
+        return []
+    aliases: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        alias = _clean_lookup_value(value)
+        if alias and alias not in seen:
+            aliases.append(alias)
+            seen.add(alias)
+    return aliases
+
+
 def _enrichment_reasons(
     *,
     has_enrichment: bool,
@@ -61,6 +82,8 @@ def upsert_organization_enrichment(
     database_url: str,
     *,
     company_name: str,
+    domain: str | None = None,
+    aliases: list[str] | None = None,
     company_type: str | None = None,
     employee_count_min: int | None = None,
     employee_count_max: int | None = None,
@@ -73,6 +96,12 @@ def upsert_organization_enrichment(
     name = _clean_text(company_name)
     if not name:
         raise ValueError("company_name is required")
+    normalized_domain = _clean_lookup_value(domain)
+    normalized_aliases = [
+        alias
+        for alias in _clean_aliases(aliases)
+        if alias not in {name.lower(), normalized_domain}
+    ]
     enrichment = {
         "company_type": company_type,
         "employee_count_label": employee_count_label,
@@ -83,6 +112,10 @@ def upsert_organization_enrichment(
         "source_url": source_url,
         "provenance_status": provenance_status,
     }
+    if normalized_domain:
+        enrichment["domain"] = normalized_domain
+    if normalized_aliases:
+        enrichment["aliases"] = normalized_aliases
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -90,22 +123,30 @@ def upsert_organization_enrichment(
                 SELECT id
                 FROM relationship_substrate.organization
                 WHERE lower(name) = lower(%s)
+                OR (%s::text IS NOT NULL AND lower(domain) = %s)
+                OR (%s::text IS NOT NULL AND (metadata->'enrichment'->'aliases') ? %s)
                 ORDER BY updated_at DESC
                 LIMIT 1
                 """,
-                (name,),
+                (
+                    name,
+                    normalized_domain or None,
+                    normalized_domain,
+                    normalized_domain or None,
+                    normalized_domain,
+                ),
             )
             row = cur.fetchone()
             if row is None:
                 cur.execute(
                     """
                     INSERT INTO relationship_substrate.organization (
-                      name, source_posture, provenance_status, metadata
+                      name, domain, source_posture, provenance_status, metadata
                     )
-                    VALUES (%s, 'enrichment', %s, %s)
+                    VALUES (%s, %s, 'enrichment', %s, %s)
                     RETURNING id
                     """,
-                    (name, provenance_status, Jsonb({"enrichment": enrichment})),
+                    (name, normalized_domain or None, provenance_status, Jsonb({"enrichment": enrichment})),
                 )
                 organization_id = cur.fetchone()[0]
             else:
@@ -114,13 +155,19 @@ def upsert_organization_enrichment(
                     """
                     UPDATE relationship_substrate.organization
                     SET
+                      domain = COALESCE(%s, domain),
                       source_posture = 'enrichment',
                       provenance_status = %s,
                       metadata = metadata || %s,
                       updated_at = now()
                     WHERE id = %s
                     """,
-                    (provenance_status, Jsonb({"enrichment": enrichment}), organization_id),
+                    (
+                        normalized_domain or None,
+                        provenance_status,
+                        Jsonb({"enrichment": enrichment}),
+                        organization_id,
+                    ),
                 )
         conn.commit()
     return {"organization_id": str(organization_id), "company_name": name, "enrichment": enrichment}
@@ -131,16 +178,28 @@ def organization_enrichment_by_name(database_url: str) -> dict[str, dict[str, An
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT DISTINCT ON (lower(name))
+                SELECT
                   lower(name),
+                  lower(domain),
                   metadata->'enrichment'
                 FROM relationship_substrate.organization
                 WHERE metadata ? 'enrichment'
-                ORDER BY lower(name), updated_at DESC
+                ORDER BY updated_at
                 """
             )
             rows = cur.fetchall()
-    return {row[0]: row[1] for row in rows if row[1] is not None}
+    enrichments: dict[str, dict[str, Any]] = {}
+    for name, domain, enrichment in rows:
+        if enrichment is None:
+            continue
+        enrichments[name] = enrichment
+        if domain:
+            enrichments[domain] = enrichment
+        for alias in enrichment.get("aliases") or []:
+            clean_alias = _clean_lookup_value(alias)
+            if clean_alias:
+                enrichments[clean_alias] = enrichment
+    return enrichments
 
 
 def organization_enrichment_worklist(database_url: str, *, limit: int = 50) -> list[dict[str, Any]]:
@@ -494,6 +553,8 @@ def import_organization_enrichments(
         upsert_organization_enrichment(
             database_url,
             company_name=company_name,
+            domain=record.get("domain"),
+            aliases=record.get("aliases"),
             company_type=record.get("company_type"),
             employee_count_min=record.get("employee_count_min"),
             employee_count_max=record.get("employee_count_max"),

@@ -473,6 +473,49 @@ def test_search_people_filters_by_enriched_consultant_count(database_url):
     assert result["organization_enrichment"]["consultant_count_estimate"] == 14
 
 
+def test_search_people_matches_curated_company_alias_to_enrichment(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    company = f"Canonical Medcoms {run_id}"
+    curated_alias = f"Canonical Medical Communications {run_id}"
+    email = f"curated-alias-{run_id}@example.com"
+    _curated_contact(
+        database_url,
+        email=email,
+        title="Medical Communications Consultant",
+        company=curated_alias,
+        full_name="Curated Alias Contact",
+    )
+    materialize_exact_emails(database_url)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=company,
+        aliases=[curated_alias],
+        company_type="medical_communications_consultancy",
+        employee_count_min=10,
+        employee_count_max=20,
+        employee_count_label="small_team",
+        consultant_count_estimate=12,
+        source_name="manual_research",
+        provenance_status="external_research",
+    )
+
+    rows = search_people(
+        database_url,
+        role_keywords=["medical communications", "consultant"],
+        actual_employee_count_min=10,
+        actual_employee_count_max=20,
+        consultant_count_min=10,
+        consultant_count_max=20,
+        limit=1000,
+    )
+
+    result = next(row for row in rows if row["email"] == email)
+    assert result["company"] == curated_alias
+    assert result["organization_enrichment"]["company_type"] == "medical_communications_consultancy"
+    assert result["organization_enrichment"]["aliases"] == [curated_alias.lower()]
+
+
 def test_search_history_backed_people_filters_by_domain_organization_enrichment(database_url):
     run_migrations(database_url)
     run_id = uuid4().hex
@@ -527,3 +570,51 @@ def test_search_history_backed_people_filters_by_domain_organization_enrichment(
         f"weak@{target_domain}",
     ]
     assert all(row["domain"] != excluded_domain for row in rows)
+
+
+def test_search_history_backed_people_matches_enrichment_domain_and_alias(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    domain = f"alias-history-{run_id}.example"
+    alias_domain = f"legacy-alias-{run_id}.example"
+    company = f"Alias Matched Medcoms {run_id}"
+    domain_email = f"domain-person@{domain}"
+    alias_email = f"alias-person@{alias_domain}"
+    ingest_msgvault_sender_rows(
+        database_url,
+        [
+            {"email": domain_email, "display_name": "Domain Person", "message_count": 18},
+            {"email": alias_email, "display_name": "Alias Person", "message_count": 16},
+        ],
+        self_aliases=set(),
+        skipped_domains=set(),
+    )
+    materialize_msgvault_senders(database_url)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=company,
+        domain=domain,
+        aliases=[alias_domain],
+        company_type="medical_communications_consultancy",
+        employee_count_min=10,
+        employee_count_max=20,
+        employee_count_label="small_team",
+        consultant_count_estimate=12,
+        source_name="manual_research",
+        provenance_status="external_research",
+    )
+
+    rows = search_history_backed_people(
+        database_url,
+        actual_employee_count_min=10,
+        actual_employee_count_max=20,
+        consultant_count_min=10,
+        consultant_count_max=20,
+        limit=1000,
+    )
+
+    current = [row for row in rows if row["email"] in {domain_email, alias_email}]
+    assert [row["email"] for row in current] == [domain_email, alias_email]
+    assert {row["company"] for row in current} == {company}
+    assert all(row["organization_enrichment"]["domain"] == domain for row in current)
+    assert all(alias_domain in row["organization_enrichment"]["aliases"] for row in current)

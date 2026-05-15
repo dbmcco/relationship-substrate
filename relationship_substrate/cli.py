@@ -194,6 +194,8 @@ def build_parser() -> argparse.ArgumentParser:
     embed.add_argument("--limit", type=int, default=None)
     org = subparsers.add_parser("upsert-organization-enrichment")
     org.add_argument("--company", required=True)
+    org.add_argument("--domain", default=None)
+    org.add_argument("--alias", action="append", default=[])
     org.add_argument("--company-type", default=None)
     org.add_argument("--employee-count-min", type=int, default=None)
     org.add_argument("--employee-count-max", type=int, default=None)
@@ -839,6 +841,8 @@ def main() -> int:
             upsert_organization_enrichment(
                 settings.database_url,
                 company_name=args.company,
+                domain=args.domain,
+                aliases=args.alias,
                 company_type=args.company_type,
                 employee_count_min=args.employee_count_min,
                 employee_count_max=args.employee_count_max,

@@ -315,26 +315,54 @@ def search_history_backed_people(
         with conn.cursor() as cur:
             cur.execute(
                 """
+                WITH history_people AS (
+                  SELECT
+                    p.id,
+                    p.display_name,
+                    p.primary_email,
+                    split_part(lower(p.primary_email), '@', 2) AS domain,
+                    COALESCE(e.interaction_count, 0)::int AS interaction_count,
+                    e.last_interaction_at,
+                    COALESCE((e.metadata->>'calendar_interaction_count')::int, 0)::int
+                      AS calendar_interaction_count
+                  FROM relationship_substrate.person p
+                  JOIN relationship_substrate.relationship_edge e
+                    ON e.person_id = p.id
+                  WHERE p.primary_email IS NOT NULL
+                )
                 SELECT
                   p.id,
                   p.display_name,
                   p.primary_email,
-                  split_part(lower(p.primary_email), '@', 2) AS domain,
-                  COALESCE(e.interaction_count, 0)::int AS interaction_count,
-                  e.last_interaction_at,
-                  COALESCE((e.metadata->>'calendar_interaction_count')::int, 0)::int
-                    AS calendar_interaction_count,
+                  p.domain,
+                  p.interaction_count,
+                  p.last_interaction_at,
+                  p.calendar_interaction_count,
                   o.name,
-                  o.metadata->'enrichment' AS organization_enrichment
-                FROM relationship_substrate.person p
-                JOIN relationship_substrate.relationship_edge e
-                  ON e.person_id = p.id
-                JOIN relationship_substrate.organization o
-                  ON lower(o.name) = split_part(lower(p.primary_email), '@', 2)
-                WHERE p.primary_email IS NOT NULL
-                AND o.metadata ? 'enrichment'
-                ORDER BY COALESCE(e.interaction_count, 0) DESC,
-                  e.last_interaction_at DESC NULLS LAST,
+                  o.organization_enrichment
+                FROM history_people p
+                JOIN LATERAL (
+                  SELECT
+                    organization.name,
+                    organization.metadata->'enrichment' AS organization_enrichment
+                  FROM relationship_substrate.organization
+                  WHERE organization.metadata ? 'enrichment'
+                  AND (
+                    lower(organization.name) = p.domain
+                    OR lower(COALESCE(organization.domain, '')) = p.domain
+                    OR (organization.metadata->'enrichment'->'aliases') ? p.domain
+                  )
+                  ORDER BY
+                    CASE
+                      WHEN lower(organization.name) = p.domain THEN 0
+                      WHEN lower(COALESCE(organization.domain, '')) = p.domain THEN 1
+                      ELSE 2
+                    END,
+                    organization.updated_at DESC
+                  LIMIT 1
+                ) o ON true
+                ORDER BY p.interaction_count DESC,
+                  p.last_interaction_at DESC NULLS LAST,
                   p.display_name
                 """
             )

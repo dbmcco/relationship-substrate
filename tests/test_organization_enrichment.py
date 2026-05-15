@@ -17,6 +17,7 @@ from relationship_substrate.organizations import (
     upsert_organization_enrichment,
     history_backed_organization_worklist,
     import_organization_enrichments,
+    organization_enrichment_by_name,
     organization_enrichment_worklist,
 )
 from relationship_substrate.repositories import upsert_source_event
@@ -76,12 +77,16 @@ def test_organization_enrichment_worklist_prioritizes_unenriched_companies(datab
 
 def test_import_organization_enrichments_upserts_reviewed_facts(database_url):
     run_migrations(database_url)
+    domain = f"reviewed-medcom-{uuid4().hex}.example"
+    alias = f"alias-{domain}"
 
     report = import_organization_enrichments(
         database_url,
         [
             {
                 "company_name": "Reviewed Medcom Co",
+                "domain": domain,
+                "aliases": [alias],
                 "company_type": "medical_communications_consultancy",
                 "employee_count_min": 10,
                 "employee_count_max": 20,
@@ -96,6 +101,10 @@ def test_import_organization_enrichments_upserts_reviewed_facts(database_url):
 
     assert report["imported"] == 1
     assert report["skipped"] == 0
+    enrichments = organization_enrichment_by_name(database_url)
+    assert enrichments["reviewed medcom co"]["domain"] == domain
+    assert enrichments[domain]["company_type"] == "medical_communications_consultancy"
+    assert enrichments[alias]["consultant_count_estimate"] == 12
 
 
 def test_history_backed_organization_worklist_ranks_companies_by_direct_history(database_url):
