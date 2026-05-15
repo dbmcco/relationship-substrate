@@ -65,6 +65,7 @@ from relationship_substrate.relationship_intelligence import (
     prepare_relationship_tone_tenor_analysis_packet,
 )
 from relationship_substrate.research import research_context_from_snapshots, upsert_research_snapshot
+from relationship_substrate.research_workers import run_organization_enrichment_research
 from relationship_substrate.repositories import (
     identity_candidate_counts,
     operating_picture_rows,
@@ -238,6 +239,10 @@ def build_parser() -> argparse.ArgumentParser:
     org_history_worklist.add_argument("--missing-only", action="store_true")
     org_import = subparsers.add_parser("import-organization-enrichments")
     org_import.add_argument("--path", required=True)
+    org_research = subparsers.add_parser("run-organization-enrichment-research")
+    org_research.add_argument("--output-dir", default="output/research/organizations")
+    org_research.add_argument("--limit", type=int, default=5)
+    org_research.add_argument("--apply", action="store_true")
     research_import = subparsers.add_parser("import-research-snapshot")
     research_import.add_argument("--path", required=True)
     research_context = subparsers.add_parser("export-research-context")
@@ -987,6 +992,20 @@ def main() -> int:
         if not isinstance(records, list):
             records = [records]
         _print_json(import_organization_enrichments(settings.database_url, records))
+        return 0
+    if args.command == "run-organization-enrichment-research":
+        run_migrations(settings.database_url)
+        _print_json(
+            run_organization_enrichment_research(
+                settings.database_url,
+                output_dir=Path(args.output_dir),
+                limit=args.limit,
+                apply=args.apply,
+                skipped_domains=set(settings.skipped_sender_domains),
+                skipped_system_localparts=set(settings.skipped_system_localparts),
+                skipped_system_prefixes=set(settings.skipped_system_prefixes),
+            )
+        )
         return 0
     if args.command == "import-research-snapshot":
         run_migrations(settings.database_url)

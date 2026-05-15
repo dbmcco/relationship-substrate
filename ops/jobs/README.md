@@ -10,6 +10,7 @@ inspect, and change them without relying on hidden machine scheduler state.
   current North Star tone-state worklist.
 - `substrate-loop.sh`: runs `substrate-cycle.sh` repeatedly. Default interval: 6 hours.
 - `nightly-worklists.sh`: exports the current enrichment and tone worklists without mutating ingest.
+  It also runs a bounded organization research pass. Default: 5 organizations, apply enabled.
 - `nightly-worklists-loop.sh`: runs `nightly-worklists.sh` repeatedly. Default interval: 24 hours.
 
 ## Inputs
@@ -36,4 +37,9 @@ RELATIONSHIP_SUBSTRATE_CALENDAR_PATHS="output/ops/calendar-a.json:output/ops/cal
 - nightly worklists: `output/nightly/<run-id>/`
 
 The scripts do not perform external web/news research yet. They produce the worklists that
-the organization enrichment and relationship tone/tenor workers should consume next.
+the relationship tone/tenor workers should consume next. Organization web research is now
+bounded by `RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_LIMIT` and can be made dry-run with:
+
+```bash
+RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_APPLY=0
+```
