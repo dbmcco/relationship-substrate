@@ -45,7 +45,7 @@ from relationship_substrate.organizations import (
     organization_enrichment_worklist,
     upsert_organization_enrichment,
 )
-from relationship_substrate.operations import run_network_pipeline
+from relationship_substrate.operations import run_network_pipeline, substrate_status
 from relationship_substrate.outreach import (
     prepare_history_backed_outreach_proposal_packet,
     prepare_outreach_proposal_packet,
@@ -239,6 +239,8 @@ def build_parser() -> argparse.ArgumentParser:
     list_feedback.add_argument("--packet-id", default=None)
     list_feedback.add_argument("--person-email", default=None)
     list_feedback.add_argument("--limit", type=int, default=50)
+    status = subparsers.add_parser("substrate-status")
+    status.add_argument("--organization-worklist-limit", type=int, default=100)
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -1044,6 +1046,18 @@ def main() -> int:
                 "count": len(results),
                 "results": results,
             }
+        )
+        return 0
+    if args.command == "substrate-status":
+        run_migrations(settings.database_url)
+        _print_json(
+            substrate_status(
+                settings.database_url,
+                organization_worklist_limit=args.organization_worklist_limit,
+                skipped_domains=set(settings.skipped_sender_domains),
+                skipped_system_localparts=set(settings.skipped_system_localparts),
+                skipped_system_prefixes=set(settings.skipped_system_prefixes),
+            )
         )
         return 0
     if args.command == "export-operating-picture":

@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 from relationship_substrate.config import Settings
-from relationship_substrate.operations import select_correspondence_seed_emails
+from relationship_substrate.contracts import SourceEventIn, SourcePosture
+from relationship_substrate.db import run_migrations
+from relationship_substrate.materialize import materialize_msgvault_correspondence
+from relationship_substrate.operations import select_correspondence_seed_emails, substrate_status
+from relationship_substrate.repositories import upsert_evidence_ref, upsert_source_event
 
 
 def test_select_correspondence_seed_emails_applies_msgvault_skip_rules():
@@ -79,3 +84,70 @@ def test_run_network_pipeline_cli_passes_operational_inputs(monkeypatch, tmp_pat
     assert captured["embed_limit"] == 11
     assert captured["skip_embeddings"] is True
     assert '"ok": true' in capsys.readouterr().out
+
+
+def test_substrate_status_reports_operational_health(database_url):
+    run_migrations(database_url)
+    email = f"status-{uuid4().hex}@example.com"
+    event = SourceEventIn(
+        source_name="msgvault",
+        source_event_type="correspondence_message",
+        source_event_key=f"msgvault:correspondence:{email}:status-1",
+        source_payload={
+            "id": "status-1",
+            "relationship_email": email,
+            "from_email": email,
+            "sent_at": "2026-05-01T12:00:00Z",
+            "subject": "Status seed",
+            "snippet": "Evidence for status reporting.",
+        },
+        source_posture=SourcePosture.DIRECT_INTERACTION,
+        provenance_status="msgvault_message",
+        trust_role="direct email correspondence evidence",
+    )
+    source_event_id = upsert_source_event(database_url, event)
+    upsert_evidence_ref(
+        database_url,
+        source_event_id=source_event_id,
+        ref_type="msgvault_message",
+        ref_value=f"{email}:status-1",
+        metadata={"relationship_email": email},
+    )
+    materialize_msgvault_correspondence(database_url)
+
+    status = substrate_status(database_url)
+
+    assert status["status_stage"] == "relationship_substrate_status"
+    assert status["counts"]["source_event"] >= 1
+    assert status["sources"]["msgvault"]["total"] >= 1
+    assert status["embeddings"]["people"]["missing"] >= 1
+    assert status["tone_state"]["missing_people_count"] >= 1
+    assert "relationship_tone_tenor_state" in status["actionable_queues"]
+
+
+def test_substrate_status_cli_outputs_health_report(monkeypatch, capsys):
+    from relationship_substrate import cli
+
+    monkeypatch.setattr(
+        cli,
+        "substrate_status",
+        lambda database_url, **kwargs: {
+            "status_stage": "relationship_substrate_status",
+            "database_url": database_url,
+            "actionable_queues": {},
+        },
+    )
+    monkeypatch.setattr(cli, "run_migrations", lambda database_url: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "relationship-substrate",
+            "--database-url",
+            "postgresql://localhost:5432/relationship_substrate_ops_test",
+            "substrate-status",
+        ],
+    )
+
+    assert cli.main() == 0
+    assert '"relationship_substrate_status"' in capsys.readouterr().out

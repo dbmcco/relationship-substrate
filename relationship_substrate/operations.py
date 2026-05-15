@@ -260,6 +260,162 @@ def _identity_candidate_report(database_url: str) -> dict[str, int | str]:
     return report
 
 
+def _count_table(cur: psycopg.Cursor, table: str) -> int:
+    cur.execute(f"SELECT count(*)::int FROM relationship_substrate.{table}")
+    return int(cur.fetchone()[0])
+
+
+def substrate_status(
+    database_url: str,
+    *,
+    organization_worklist_limit: int = 100,
+    skipped_domains: set[str] | None = None,
+    skipped_system_localparts: set[str] | None = None,
+    skipped_system_prefixes: set[str] | None = None,
+) -> dict[str, object]:
+    counts = substrate_counts(database_url)
+    optional_counts: dict[str, int] = {}
+    sources: dict[str, dict[str, object]] = {}
+    embeddings: dict[str, dict[str, int]] = {}
+    tone_state: dict[str, int] = {}
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            for table in [
+                "organization",
+                "affiliation",
+                "relationship_state",
+                "research_snapshot",
+                "network_packet",
+                "network_feedback",
+            ]:
+                optional_counts[table] = _count_table(cur, table)
+            cur.execute(
+                """
+                SELECT
+                  source_name,
+                  count(*)::int,
+                  max(observed_at)
+                FROM relationship_substrate.source_event
+                GROUP BY source_name
+                ORDER BY source_name
+                """
+            )
+            sources = {
+                row[0]: {
+                    "total": int(row[1]),
+                    "last_observed_at": row[2].isoformat() if row[2] else None,
+                }
+                for row in cur.fetchall()
+            }
+            cur.execute(
+                """
+                SELECT
+                  count(*)::int,
+                  count(content_embedding)::int
+                FROM relationship_substrate.person
+                """
+            )
+            person_total, person_embedded = cur.fetchone()
+            cur.execute(
+                """
+                SELECT
+                  count(*)::int,
+                  count(content_embedding)::int
+                FROM relationship_substrate.organization
+                """
+            )
+            organization_total, organization_embedded = cur.fetchone()
+            embeddings = {
+                "people": {
+                    "total": int(person_total),
+                    "embedded": int(person_embedded),
+                    "missing": max(int(person_total) - int(person_embedded), 0),
+                },
+                "organizations": {
+                    "total": int(organization_total),
+                    "embedded": int(organization_embedded),
+                    "missing": max(int(organization_total) - int(organization_embedded), 0),
+                },
+            }
+            cur.execute(
+                """
+                SELECT count(*)::int
+                FROM relationship_substrate.person p
+                JOIN relationship_substrate.relationship_edge e
+                  ON e.person_id = p.id
+                WHERE COALESCE(e.interaction_count, 0) > 0
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM relationship_substrate.relationship_state rs
+                  WHERE rs.person_id = p.id
+                  AND rs.state_kind = 'relationship_tone_tenor'
+                )
+                """
+            )
+            missing_tone_people = int(cur.fetchone()[0])
+            cur.execute(
+                """
+                SELECT count(*)::int
+                FROM relationship_substrate.relationship_state
+                WHERE state_kind = 'relationship_tone_tenor'
+                """
+            )
+            persisted_tone_states = int(cur.fetchone()[0])
+            tone_state = {
+                "persisted_tone_tenor_states": persisted_tone_states,
+                "missing_people_count": missing_tone_people,
+            }
+
+    organization_worklist = history_backed_organization_worklist(
+        database_url,
+        limit=organization_worklist_limit,
+        skipped_domains=skipped_domains,
+        skipped_system_localparts=skipped_system_localparts,
+        skipped_system_prefixes=skipped_system_prefixes,
+        missing_enrichment_only=True,
+    )
+    queues = {
+        "organization_enrichment": {
+            "count": len(organization_worklist),
+            "sample": organization_worklist[:5],
+        },
+        "relationship_tone_tenor_state": {
+            "count": tone_state["missing_people_count"],
+        },
+        "person_embeddings": {
+            "count": embeddings["people"]["missing"],
+        },
+        "organization_embeddings": {
+            "count": embeddings["organizations"]["missing"],
+        },
+    }
+    return {
+        "status_stage": "relationship_substrate_status",
+        "database_url": database_url,
+        "counts": {**counts, **optional_counts},
+        "sources": sources,
+        "embeddings": embeddings,
+        "organization_enrichment": {
+            "missing_worklist_count": len(organization_worklist),
+            "missing_worklist_sample": organization_worklist[:5],
+        },
+        "research": {
+            "snapshots": optional_counts["research_snapshot"],
+        },
+        "network_packets": {
+            "packets": optional_counts["network_packet"],
+            "feedback": optional_counts["network_feedback"],
+        },
+        "tone_state": tone_state,
+        "actionable_queues": queues,
+        "background_sync": {
+            "command": "relationship-substrate run-network-pipeline",
+            "bounded": True,
+            "resumable": True,
+        },
+    }
+
+
 def run_network_pipeline(
     settings: Settings,
     *,
