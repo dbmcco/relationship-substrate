@@ -330,6 +330,57 @@ def test_agent_cli_ingests_and_materializes_calendar_json(database_url, tmp_path
     assert relationship["metadata"]["calendar_interaction_count"] == 1
 
 
+def test_agent_cli_ingests_calendar_page_directory(database_url, tmp_path, monkeypatch, capsys):
+    run_migrations(database_url)
+    export_dir = tmp_path / "calendar-pages"
+    export_dir.mkdir()
+    first = f"clipageone{uuid4().hex}"
+    second = f"clipagetwo{uuid4().hex}"
+    for name, localpart in [("page-1.json", first), ("page-2.json", second)]:
+        (export_dir / name).write_text(
+            json.dumps(
+                {
+                    "items": [
+                        {
+                            "id": f"event-{localpart}",
+                            "summary": "Calendar page smoke",
+                            "start": {"dateTime": "2026-05-02T10:00:00-04:00"},
+                            "attendees": [
+                                {"email": f"{localpart}@example.com", "displayName": "Calendar Page Person"},
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    ingested = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "ingest-calendar",
+        "--path",
+        str(export_dir),
+    )
+    materialized = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "materialize-calendar-events",
+    )
+
+    assert ingested == {
+        "source": "calendar",
+        "files_seen": 2,
+        "events_seen": 2,
+        "events_upserted": 2,
+    }
+    assert materialized["attendees_materialized"] >= 2
+
+
 def test_agent_cli_shows_person_dossier(database_url, tmp_path, monkeypatch, capsys):
     run_migrations(database_url)
     calendar_path = tmp_path / "dossier-calendar.json"

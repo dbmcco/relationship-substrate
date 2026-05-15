@@ -7,11 +7,24 @@ from typing import Iterator
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 
 
+def iter_calendar_export_paths(path: Path) -> Iterator[Path]:
+    if path.is_dir():
+        yield from sorted(child for child in path.iterdir() if child.is_file() and child.suffix == ".json")
+        return
+    yield path
+
+
 def _items(payload: object) -> list[dict]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
     if not isinstance(payload, dict):
         return []
+    pages = payload.get("pages")
+    if isinstance(pages, list):
+        items: list[dict] = []
+        for page in pages:
+            items.extend(_items(page))
+        return items
     for key in ("items", "events", "data"):
         value = payload.get(key)
         if isinstance(value, list):

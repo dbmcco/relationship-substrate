@@ -9,7 +9,7 @@ from urllib.parse import urlparse, urlunparse
 import psycopg
 from psycopg import sql
 
-from relationship_substrate.adapters.calendar import iter_calendar_json_events
+from relationship_substrate.adapters.calendar import iter_calendar_export_paths, iter_calendar_json_events
 from relationship_substrate.adapters.msgvault import MsgvaultAdapter
 from relationship_substrate.adapters.next_up import iter_next_up_events
 from relationship_substrate.config import Settings
@@ -140,25 +140,31 @@ def _ingest_next_up(database_url: str, path: Path) -> dict[str, int | str]:
 
 
 def _ingest_calendar(database_url: str, path: Path) -> dict[str, int | str]:
+    files_seen = 0
     events_seen = 0
     events_upserted = 0
-    for event in iter_calendar_json_events(path):
-        events_seen += 1
-        source_event_id = upsert_source_event(database_url, event)
-        upsert_evidence_ref(
-            database_url,
-            source_event_id=source_event_id,
-            ref_type="calendar_event",
-            ref_value=event.source_event_key,
-            metadata={"path": str(path)},
-        )
-        events_upserted += 1
-    return {
+    for export_path in iter_calendar_export_paths(path):
+        files_seen += 1
+        for event in iter_calendar_json_events(export_path):
+            events_seen += 1
+            source_event_id = upsert_source_event(database_url, event)
+            upsert_evidence_ref(
+                database_url,
+                source_event_id=source_event_id,
+                ref_type="calendar_event",
+                ref_value=event.source_event_key,
+                metadata={"path": str(export_path)},
+            )
+            events_upserted += 1
+    report = {
         "source": "calendar",
         "path": str(path),
         "events_seen": events_seen,
         "events_upserted": events_upserted,
     }
+    if path.is_dir():
+        report["files_seen"] = files_seen
+    return report
 
 
 def _ingest_msgvault_sender_rows(
