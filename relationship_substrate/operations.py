@@ -23,6 +23,13 @@ from relationship_substrate.materialize import (
     materialize_msgvault_correspondence,
     materialize_msgvault_senders,
 )
+from relationship_substrate.network_ask import (
+    evaluate_ask_network_packet,
+    tone_state_worklist_from_ask_packet,
+    validate_ask_network_recommendations,
+)
+from relationship_substrate.network_feedback import record_network_feedback
+from relationship_substrate.network_packets import persist_ask_network_packet
 from relationship_substrate.organizations import history_backed_organization_worklist
 from relationship_substrate.repositories import (
     identity_candidate_counts,
@@ -413,6 +420,103 @@ def substrate_status(
             "bounded": True,
             "resumable": True,
         },
+    }
+
+
+def _check(check_id: str, passed: bool, detail: str) -> dict[str, object]:
+    return {"id": check_id, "passed": bool(passed), "detail": detail}
+
+
+def evaluate_non_ui_workflow(
+    database_url: str,
+    *,
+    packet: dict[str, Any],
+    recommendations: list[dict[str, Any]],
+    feedback_person_email: str | None,
+    feedback_kind: str,
+    feedback: dict[str, Any],
+) -> dict[str, object]:
+    packet_eval = evaluate_ask_network_packet(packet)
+    validated_recommendations = validate_ask_network_recommendations(packet, recommendations)
+    packet_record = persist_ask_network_packet(database_url, packet)
+    feedback_record = record_network_feedback(
+        database_url,
+        packet_id=packet_record["id"],
+        person_email=feedback_person_email,
+        feedback_kind=feedback_kind,
+        feedback=feedback,
+    )
+    tone_worklist = tone_state_worklist_from_ask_packet(packet)
+    status = substrate_status(database_url)
+    people = packet.get("people") or []
+    checks = [
+        _check(
+            "candidate_count",
+            bool(people) and int(packet.get("count") or 0) == len(people),
+            "Packet returns inspectable candidates.",
+        ),
+        _check(
+            "actual_org_size_evidence",
+            all(
+                (person.get("organization_context") or {}).get("actual_employee_count_min") is not None
+                and (person.get("organization_context") or {}).get("actual_employee_count_max") is not None
+                for person in people
+            ),
+            "Every candidate has actual organization size evidence.",
+        ),
+        _check(
+            "direct_relationship_evidence",
+            all(
+                int((person.get("evidence_summary") or {}).get("evidence_ref_count") or 0) > 0
+                for person in people
+            ),
+            "Every candidate has direct relationship evidence.",
+        ),
+        _check(
+            "research_refs",
+            all(recommendation.get("cited_research_refs") for recommendation in validated_recommendations),
+            "Model recommendations cite supplied research refs.",
+        ),
+        _check(
+            "tone_state_readiness",
+            tone_worklist["count"] > 0
+            or all(
+                (person.get("evidence_summary") or {}).get("has_prior_tone_state")
+                for person in people
+            ),
+            "Tone-state worklist exposes missing candidates.",
+        ),
+        _check(
+            "model_recommendation_validation",
+            len(validated_recommendations) == len(recommendations),
+            "Model recommendations validate against packet candidates and citations.",
+        ),
+        _check(
+            "packet_persistence",
+            bool(packet_record.get("id")),
+            "Ask-network packet persisted.",
+        ),
+        _check(
+            "feedback_persistence",
+            bool(feedback_record.get("id")),
+            "Network feedback persisted.",
+        ),
+        _check(
+            "actionable_failures",
+            bool((status.get("actionable_queues") or {})),
+            "Substrate status exposes actionable queues.",
+        ),
+    ]
+    return {
+        "eval_stage": "non_ui_end_to_end_eval",
+        "ok": packet_eval["ok"] and all(check["passed"] for check in checks),
+        "checks": checks,
+        "ask_network_eval": packet_eval,
+        "validated_recommendations": validated_recommendations,
+        "packet_record": packet_record,
+        "feedback_record": feedback_record,
+        "tone_state_worklist": tone_worklist,
+        "substrate_status": status,
     }
 
 

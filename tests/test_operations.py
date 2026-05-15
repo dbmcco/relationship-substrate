@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -8,7 +9,13 @@ from relationship_substrate.config import Settings
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
 from relationship_substrate.materialize import materialize_msgvault_correspondence
-from relationship_substrate.operations import select_correspondence_seed_emails, substrate_status
+from relationship_substrate.network_ask import prepare_ask_network_packet
+from relationship_substrate.operations import (
+    evaluate_non_ui_workflow,
+    select_correspondence_seed_emails,
+    substrate_status,
+)
+from relationship_substrate.organizations import upsert_organization_enrichment
 from relationship_substrate.repositories import upsert_evidence_ref, upsert_source_event
 
 
@@ -151,3 +158,137 @@ def test_substrate_status_cli_outputs_health_report(monkeypatch, capsys):
 
     assert cli.main() == 0
     assert '"relationship_substrate_status"' in capsys.readouterr().out
+
+
+def test_evaluate_non_ui_workflow_validates_packet_recommendations_persistence_and_feedback(
+    database_url,
+):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    unique_count = 1_600_000 + int(run_id[:6], 16)
+    domain = f"non-ui-eval-{run_id}.example"
+    email = f"consultant@{domain}"
+    event = SourceEventIn(
+        source_name="msgvault",
+        source_event_type="correspondence_message",
+        source_event_key=f"msgvault:correspondence:{email}:eval-1",
+        source_payload={
+            "id": "eval-1",
+            "relationship_email": email,
+            "from_email": email,
+            "sent_at": "2026-05-01T12:00:00Z",
+            "subject": "Eval seed",
+            "snippet": "Evidence for non-UI eval.",
+        },
+        source_posture=SourcePosture.DIRECT_INTERACTION,
+        provenance_status="msgvault_message",
+        trust_role="direct email correspondence evidence",
+    )
+    source_event_id = upsert_source_event(database_url, event)
+    evidence_ref_id = str(
+        upsert_evidence_ref(
+            database_url,
+            source_event_id=source_event_id,
+            ref_type="msgvault_message",
+            ref_value=f"{email}:eval-1",
+            metadata={"relationship_email": email},
+        )
+    )
+    materialize_msgvault_correspondence(database_url)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_consulting_firm",
+        employee_count_min=unique_count,
+        employee_count_max=unique_count,
+        consultant_count_estimate=unique_count,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+    packet = prepare_ask_network_packet(
+        database_url,
+        goal="Find consultants at small firms.",
+        actual_employee_count_min=unique_count,
+        actual_employee_count_max=unique_count,
+        consultant_count_min=unique_count,
+        consultant_count_max=unique_count,
+        limit=1,
+        research_context={"sources": [{"id": "eval-research", "url": "https://example.com/eval"}]},
+    )
+    recommendation = {
+        "person_email": email,
+        "priority": "model-ranked-high",
+        "goal_fit_rationale": "Model-authored goal fit.",
+        "relationship_rationale": "Model-authored relationship rationale.",
+        "relationship_risk_or_caution": "Model-authored caution.",
+        "best_angle": "Model-authored angle.",
+        "next_action": "Model-authored next action.",
+        "draft_email": {"subject": "Model subject", "body": "Model body"},
+        "cited_evidence_refs": [evidence_ref_id],
+        "cited_research_refs": ["eval-research"],
+    }
+
+    report = evaluate_non_ui_workflow(
+        database_url,
+        packet=packet,
+        recommendations=[recommendation],
+        feedback_person_email=email,
+        feedback_kind="eval_decision",
+        feedback={"decision": "reviewed", "note": "Eval feedback persisted."},
+    )
+
+    assert report["eval_stage"] == "non_ui_end_to_end_eval"
+    assert report["ok"] is True
+    assert report["packet_record"]["id"]
+    assert report["feedback_record"]["id"]
+    checks = {check["id"]: check for check in report["checks"]}
+    assert all(check["passed"] for check in checks.values())
+    assert checks["tone_state_readiness"]["detail"] == "Tone-state worklist exposes missing candidates."
+
+
+def test_eval_non_ui_workflow_cli_reads_json_inputs(monkeypatch, tmp_path, capsys):
+    from relationship_substrate import cli
+
+    packet_path = tmp_path / "packet.json"
+    recommendations_path = tmp_path / "recommendations.json"
+    feedback_path = tmp_path / "feedback.json"
+    packet_path.write_text(json.dumps({"ask_stage": "network_relationship_packet"}), encoding="utf-8")
+    recommendations_path.write_text(json.dumps([{"person_email": "person@example.com"}]), encoding="utf-8")
+    feedback_path.write_text(json.dumps({"decision": "reviewed"}), encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_eval(database_url: str, **kwargs: object) -> dict[str, object]:
+        captured["database_url"] = database_url
+        captured.update(kwargs)
+        return {"eval_stage": "non_ui_end_to_end_eval", "ok": True}
+
+    monkeypatch.setattr(cli, "run_migrations", lambda database_url: None)
+    monkeypatch.setattr(cli, "evaluate_non_ui_workflow", fake_eval)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "relationship-substrate",
+            "--database-url",
+            "postgresql://localhost:5432/relationship_substrate_ops_test",
+            "eval-non-ui-workflow",
+            "--ask-packet",
+            str(packet_path),
+            "--model-proposal",
+            str(recommendations_path),
+            "--feedback",
+            str(feedback_path),
+            "--feedback-person-email",
+            "person@example.com",
+            "--feedback-kind",
+            "eval_decision",
+        ],
+    )
+
+    assert cli.main() == 0
+    assert captured["packet"] == {"ask_stage": "network_relationship_packet"}
+    assert captured["recommendations"] == [{"person_email": "person@example.com"}]
+    assert captured["feedback"] == {"decision": "reviewed"}
+    assert captured["feedback_person_email"] == "person@example.com"
+    assert captured["feedback_kind"] == "eval_decision"
+    assert '"ok": true' in capsys.readouterr().out

@@ -45,7 +45,7 @@ from relationship_substrate.organizations import (
     organization_enrichment_worklist,
     upsert_organization_enrichment,
 )
-from relationship_substrate.operations import run_network_pipeline, substrate_status
+from relationship_substrate.operations import evaluate_non_ui_workflow, run_network_pipeline, substrate_status
 from relationship_substrate.outreach import (
     prepare_history_backed_outreach_proposal_packet,
     prepare_outreach_proposal_packet,
@@ -241,6 +241,12 @@ def build_parser() -> argparse.ArgumentParser:
     list_feedback.add_argument("--limit", type=int, default=50)
     status = subparsers.add_parser("substrate-status")
     status.add_argument("--organization-worklist-limit", type=int, default=100)
+    non_ui_eval = subparsers.add_parser("eval-non-ui-workflow")
+    non_ui_eval.add_argument("--ask-packet", required=True)
+    non_ui_eval.add_argument("--model-proposal", required=True)
+    non_ui_eval.add_argument("--feedback", required=True)
+    non_ui_eval.add_argument("--feedback-person-email", default=None)
+    non_ui_eval.add_argument("--feedback-kind", default="eval_feedback")
     export = subparsers.add_parser("export-operating-picture")
     export.add_argument("--from-db", action="store_true")
     export.add_argument("--limit", type=int, default=25)
@@ -1057,6 +1063,22 @@ def main() -> int:
                 skipped_domains=set(settings.skipped_sender_domains),
                 skipped_system_localparts=set(settings.skipped_system_localparts),
                 skipped_system_prefixes=set(settings.skipped_system_prefixes),
+            )
+        )
+        return 0
+    if args.command == "eval-non-ui-workflow":
+        run_migrations(settings.database_url)
+        packet = json.loads(Path(args.ask_packet).read_text(encoding="utf-8"))
+        recommendations = json.loads(Path(args.model_proposal).read_text(encoding="utf-8"))
+        feedback = json.loads(Path(args.feedback).read_text(encoding="utf-8"))
+        _print_json(
+            evaluate_non_ui_workflow(
+                settings.database_url,
+                packet=packet,
+                recommendations=recommendations,
+                feedback_person_email=args.feedback_person_email,
+                feedback_kind=args.feedback_kind,
+                feedback=feedback,
             )
         )
         return 0
