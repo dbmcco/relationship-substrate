@@ -308,13 +308,27 @@ def search_history_backed_people(
     actual_employee_count_max: int | None = None,
     consultant_count_min: int | None = None,
     consultant_count_max: int | None = None,
+    semantic_query_embedding: list[float] | None = None,
+    sort: str | None = None,
     limit: int = 25,
     as_of: datetime | None = None,
 ) -> list[dict[str, Any]]:
+    semantic_select = "NULL::double precision AS semantic_distance"
+    params: list[object] = []
+    if semantic_query_embedding is not None:
+        semantic_select = """
+          CASE
+            WHEN p.content_embedding IS NOT NULL
+            AND vector_dims(p.content_embedding) = %s
+            THEN p.content_embedding <=> %s::vector
+            ELSE NULL
+          END AS semantic_distance
+        """
+        params.extend([len(semantic_query_embedding), _vector_literal(semantic_query_embedding)])
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 WITH history_people AS (
                   SELECT
                     p.id,
@@ -324,7 +338,8 @@ def search_history_backed_people(
                     COALESCE(e.interaction_count, 0)::int AS interaction_count,
                     e.last_interaction_at,
                     COALESCE((e.metadata->>'calendar_interaction_count')::int, 0)::int
-                      AS calendar_interaction_count
+                      AS calendar_interaction_count,
+                    {semantic_select}
                   FROM relationship_substrate.person p
                   JOIN relationship_substrate.relationship_edge e
                     ON e.person_id = p.id
@@ -339,7 +354,8 @@ def search_history_backed_people(
                   p.last_interaction_at,
                   p.calendar_interaction_count,
                   o.name,
-                  o.organization_enrichment
+                  o.organization_enrichment,
+                  p.semantic_distance
                 FROM history_people p
                 JOIN LATERAL (
                   SELECT
@@ -364,7 +380,8 @@ def search_history_backed_people(
                 ORDER BY p.interaction_count DESC,
                   p.last_interaction_at DESC NULLS LAST,
                   p.display_name
-                """
+                """,
+                params,
             )
             rows = cur.fetchall()
 
@@ -390,6 +407,8 @@ def search_history_backed_people(
         interaction_count = int(row[4] or 0)
         calendar_interaction_count = int(row[6] or 0)
         last_interaction_at = row[5].isoformat() if row[5] else None
+        semantic_distance = row[9]
+        semantic_similarity = 1.0 - float(semantic_distance) if semantic_distance is not None else None
         results.append(
             {
                 "person_id": str(row[0]),
@@ -405,6 +424,11 @@ def search_history_backed_people(
                     "last_interaction_at": last_interaction_at,
                     "freshness": relationship_freshness(last_interaction_at, as_of=as_of),
                 },
+                "semantic": {
+                    "distance": semantic_distance,
+                    "similarity": semantic_similarity,
+                    "has_person_embedding": semantic_distance is not None,
+                },
                 "match_reasons": [
                     "history_backed_domain",
                     f"actual_employee_count:{enrichment.get('employee_count_min')}-{enrichment.get('employee_count_max')}",
@@ -413,6 +437,6 @@ def search_history_backed_people(
             }
         )
         seen_emails.add(email)
-        if len(results) >= limit:
-            break
-    return results
+    sort_mode = sort or ("semantic" if semantic_query_embedding is not None else "relationship")
+    key = _semantic_sort_key if sort_mode == "semantic" else _relationship_sort_key
+    return sorted(results, key=key, reverse=True)[:limit]

@@ -149,6 +149,10 @@ def build_parser() -> argparse.ArgumentParser:
     ask_network.add_argument("--prior-state-limit", type=int, default=3)
     ask_network.add_argument("--refresh-missing-evidence", action="store_true")
     ask_network.add_argument("--refresh-evidence-limit", type=int, default=50)
+    ask_network.add_argument("--semantic-query", default=None)
+    ask_network.add_argument("--semantic-provider", choices=["ollama", "openai", "hash"], default="ollama")
+    ask_network.add_argument("--embedding-model", default=None)
+    ask_network.add_argument("--sort", choices=["relationship", "semantic"], default=None)
     eval_ask_network = subparsers.add_parser("eval-ask-network")
     eval_ask_network.add_argument("--goal", required=True)
     eval_ask_network.add_argument("--actual-employee-count-min", type=int, default=None)
@@ -166,6 +170,10 @@ def build_parser() -> argparse.ArgumentParser:
     eval_ask_network.add_argument("--prior-state-limit", type=int, default=3)
     eval_ask_network.add_argument("--refresh-missing-evidence", action="store_true")
     eval_ask_network.add_argument("--refresh-evidence-limit", type=int, default=50)
+    eval_ask_network.add_argument("--semantic-query", default=None)
+    eval_ask_network.add_argument("--semantic-provider", choices=["ollama", "openai", "hash"], default="ollama")
+    eval_ask_network.add_argument("--embedding-model", default=None)
+    eval_ask_network.add_argument("--sort", choices=["relationship", "semantic"], default=None)
     persist_state = subparsers.add_parser("persist-relationship-state")
     persist_state.add_argument("--email", required=True)
     persist_state.add_argument("--proposal", required=True)
@@ -743,6 +751,16 @@ def main() -> int:
                     "ingestion": ingestion,
                     "materialization": materialization,
                 }
+        semantic_query_embedding = None
+        semantic_provider = None
+        embedding_model = None
+        if args.semantic_query:
+            semantic_provider = args.semantic_provider
+            embedding_model = _embedding_model(args.semantic_provider, args.embedding_model)
+            semantic_query_embedding = _embedding_function(
+                args.semantic_provider,
+                model=args.embedding_model,
+            )([args.semantic_query])[0]
         packet = prepare_ask_network_packet(
             settings.database_url,
             goal=args.goal,
@@ -750,6 +768,11 @@ def main() -> int:
             actual_employee_count_max=args.actual_employee_count_max,
             consultant_count_min=args.consultant_count_min,
             consultant_count_max=args.consultant_count_max,
+            semantic_query=args.semantic_query,
+            semantic_query_embedding=semantic_query_embedding,
+            semantic_provider=semantic_provider,
+            embedding_model=embedding_model,
+            sort=args.sort,
             limit=args.limit,
             research_context=research_context,
             evidence_limit=args.evidence_limit,
@@ -791,6 +814,16 @@ def main() -> int:
                     "ingestion": ingestion,
                     "materialization": materialization,
                 }
+        semantic_query_embedding = None
+        semantic_provider = None
+        embedding_model = None
+        if args.semantic_query:
+            semantic_provider = args.semantic_provider
+            embedding_model = _embedding_model(args.semantic_provider, args.embedding_model)
+            semantic_query_embedding = _embedding_function(
+                args.semantic_provider,
+                model=args.embedding_model,
+            )([args.semantic_query])[0]
         packet = prepare_ask_network_packet(
             settings.database_url,
             goal=args.goal,
@@ -798,6 +831,11 @@ def main() -> int:
             actual_employee_count_max=args.actual_employee_count_max,
             consultant_count_min=args.consultant_count_min,
             consultant_count_max=args.consultant_count_max,
+            semantic_query=args.semantic_query,
+            semantic_query_embedding=semantic_query_embedding,
+            semantic_provider=semantic_provider,
+            embedding_model=embedding_model,
+            sort=args.sort,
             limit=args.limit,
             research_context=research_context,
             evidence_limit=args.evidence_limit,

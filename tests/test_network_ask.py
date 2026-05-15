@@ -133,6 +133,65 @@ def test_ask_network_cli_returns_contract_packet_without_model_judgment(
     assert "draft_email" not in person_packet
 
 
+def test_ask_network_cli_accepts_semantic_query_and_reports_embedding_readiness(
+    database_url,
+    monkeypatch,
+    capsys,
+):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    domain = f"ask-semantic-{run_id}.example"
+    email = f"consultant@{domain}"
+    _relationship_evidence(database_url, email=email)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_medcoms_consultancy",
+        employee_count_min=10,
+        employee_count_max=10,
+        employee_count_label="test sourced team count",
+        consultant_count_estimate=10,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+
+    packet = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "ask-network",
+        "--goal",
+        "Find people who can help with medcoms consulting.",
+        "--actual-employee-count-min",
+        "8",
+        "--actual-employee-count-max",
+        "15",
+        "--consultant-count-min",
+        "8",
+        "--consultant-count-max",
+        "20",
+        "--semantic-query",
+        "medical communications consulting",
+        "--semantic-provider",
+        "hash",
+        "--sort",
+        "semantic",
+        "--limit",
+        "1000",
+    )
+
+    person_packet = next(person for person in packet["people"] if person["email"] == email)
+    assert packet["query"]["search_mode"] == "history_backed_semantic"
+    assert packet["query"]["constraints"]["semantic_query"] == "medical communications consulting"
+    assert packet["query"]["constraints"]["semantic_provider"] == "hash"
+    assert packet["query"]["constraints"]["embedding_model"] == "hash"
+    assert "person_embedding" in person_packet["packet_readiness"]["missing"]
+    assert "missing:person_embedding" in packet["readiness"]["warnings"]
+    assert person_packet["search_hit"]["semantic"]["has_person_embedding"] is False
+    assert person_packet["model_inputs"]["semantic_query"] == "medical communications consulting"
+
+
 def test_ask_network_refreshes_missing_evidence_and_rebuilds_packet(database_url):
     run_migrations(database_url)
     run_id = uuid4().hex

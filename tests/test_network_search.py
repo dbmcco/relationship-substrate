@@ -618,3 +618,53 @@ def test_search_history_backed_people_matches_enrichment_domain_and_alias(databa
     assert {row["company"] for row in current} == {company}
     assert all(row["organization_enrichment"]["domain"] == domain for row in current)
     assert all(alias_domain in row["organization_enrichment"]["aliases"] for row in current)
+
+
+def test_search_history_backed_people_can_rank_by_semantic_similarity(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    semantic_domain = f"semantic-history-{run_id}.example"
+    stronger_domain = f"stronger-history-{run_id}.example"
+    semantic_email = f"semantic@{semantic_domain}"
+    stronger_email = f"stronger@{stronger_domain}"
+    ingest_msgvault_sender_rows(
+        database_url,
+        [
+            {"email": semantic_email, "display_name": "Semantic Match", "message_count": 5},
+            {"email": stronger_email, "display_name": "Relationship Stronger", "message_count": 25},
+        ],
+        self_aliases=set(),
+        skipped_domains=set(),
+    )
+    materialize_msgvault_senders(database_url)
+    for domain in [semantic_domain, stronger_domain]:
+        upsert_organization_enrichment(
+            database_url,
+            company_name=domain,
+            company_type="medical_communications_consultancy",
+            employee_count_min=10,
+            employee_count_max=20,
+            employee_count_label="small_team",
+            consultant_count_estimate=12,
+            source_name="manual_research",
+            provenance_status="external_research",
+        )
+    _set_person_embedding(database_url, email=semantic_email, embedding=_embedding(1.0))
+    _set_person_embedding(database_url, email=stronger_email, embedding=_embedding(0.0, 1.0))
+
+    rows = search_history_backed_people(
+        database_url,
+        actual_employee_count_min=10,
+        actual_employee_count_max=20,
+        consultant_count_min=10,
+        consultant_count_max=20,
+        semantic_query_embedding=_embedding(1.0),
+        sort="semantic",
+        limit=1000,
+    )
+
+    current = [row for row in rows if row["email"] in {semantic_email, stronger_email}]
+    assert [row["email"] for row in current] == [semantic_email, stronger_email]
+    assert current[0]["relationship"]["interaction_count"] == 5
+    assert current[0]["semantic"]["has_person_embedding"] is True
+    assert current[0]["semantic"]["similarity"] > current[1]["semantic"]["similarity"]

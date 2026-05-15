@@ -97,6 +97,7 @@ def _evidence_summary(person_packet: dict[str, Any]) -> dict[str, Any]:
     relationship_tone_tenor = person_packet.get("relationship_tone_tenor") or {}
     search_hit = person_packet.get("search_hit") or {}
     relationship = search_hit.get("relationship") or {}
+    semantic = search_hit.get("semantic") or {}
     evidence_refs = _evidence_ref_ids(relationship_intelligence)
     return {
         "evidence_ref_count": len(evidence_refs),
@@ -115,6 +116,7 @@ def _evidence_summary(person_packet: dict[str, Any]) -> dict[str, Any]:
         "has_direct_relationship_evidence": bool(evidence_refs),
         "has_prior_tone_state": bool(relationship_tone_tenor.get("prior_tone_tenor_states") or []),
         "has_organization_enrichment": bool(search_hit.get("organization_enrichment")),
+        "has_semantic_embedding": bool(semantic.get("has_person_embedding")),
     }
 
 
@@ -122,6 +124,7 @@ def _packet_readiness(
     *,
     evidence_summary: dict[str, Any],
     research_refs: set[str],
+    require_semantic_embedding: bool = False,
     refresh_actions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     refresh_actions = refresh_actions or []
@@ -134,6 +137,8 @@ def _packet_readiness(
         missing.append("relationship_tone_tenor_state")
     if not research_refs:
         missing.append("research_context")
+    if require_semantic_embedding and not evidence_summary["has_semantic_embedding"]:
+        missing.append("person_embedding")
 
     ready_for_model_ranking = (
         evidence_summary["has_direct_relationship_evidence"]
@@ -158,11 +163,15 @@ def _packet_readiness(
 def _model_inputs(
     *,
     goal: str,
+    semantic_query: str | None,
+    search_hit: dict[str, Any],
     relationship_intelligence: dict[str, Any],
     research_refs: set[str],
 ) -> dict[str, Any]:
     return {
         "goal": goal,
+        "semantic_query": semantic_query,
+        "candidate_semantic": search_hit.get("semantic") or {},
         "candidate_evidence_refs": _evidence_ref_ids(relationship_intelligence),
         "candidate_research_refs": sorted(research_refs),
         "model_may_judge": [
@@ -277,6 +286,8 @@ def _base_history_packet(
     actual_employee_count_max: int | None,
     consultant_count_min: int | None,
     consultant_count_max: int | None,
+    semantic_query_embedding: list[float] | None,
+    sort: str | None,
     limit: int,
     research_context: Any,
     evidence_limit: int,
@@ -288,6 +299,8 @@ def _base_history_packet(
         actual_employee_count_max=actual_employee_count_max,
         consultant_count_min=consultant_count_min,
         consultant_count_max=consultant_count_max,
+        semantic_query_embedding=semantic_query_embedding,
+        sort=sort,
         limit=limit,
         research_context=research_context,
         evidence_limit=evidence_limit,
@@ -299,6 +312,8 @@ def _decorate_people(
     base_people: list[dict[str, Any]],
     *,
     goal: str,
+    semantic_query: str | None,
+    require_semantic_embedding: bool,
     research_refs: set[str],
     refresh_actions_by_email: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
@@ -311,6 +326,7 @@ def _decorate_people(
         packet_readiness = _packet_readiness(
             evidence_summary=evidence_summary,
             research_refs=research_refs,
+            require_semantic_embedding=require_semantic_embedding,
             refresh_actions=refresh_actions_by_email.get(email, []),
         )
         people.append(
@@ -321,6 +337,8 @@ def _decorate_people(
                 "organization_context": _organization_context(base_person["search_hit"]),
                 "model_inputs": _model_inputs(
                     goal=goal,
+                    semantic_query=semantic_query,
+                    search_hit=base_person["search_hit"],
                     relationship_intelligence=relationship_intelligence,
                     research_refs=research_refs,
                 ),
@@ -337,6 +355,11 @@ def prepare_ask_network_packet(
     actual_employee_count_max: int | None = None,
     consultant_count_min: int | None = None,
     consultant_count_max: int | None = None,
+    semantic_query: str | None = None,
+    semantic_query_embedding: list[float] | None = None,
+    semantic_provider: str | None = None,
+    embedding_model: str | None = None,
+    sort: str | None = None,
     limit: int = 10,
     research_context: Any | None = None,
     evidence_limit: int = 10,
@@ -352,12 +375,21 @@ def prepare_ask_network_packet(
         actual_employee_count_max=actual_employee_count_max,
         consultant_count_min=consultant_count_min,
         consultant_count_max=consultant_count_max,
+        semantic_query_embedding=semantic_query_embedding,
+        sort=sort,
         limit=limit,
         research_context=research_context,
         evidence_limit=evidence_limit,
         prior_state_limit=prior_state_limit,
     )
-    people = _decorate_people(base_packet["people"], goal=goal, research_refs=research_refs)
+    require_semantic_embedding = semantic_query_embedding is not None
+    people = _decorate_people(
+        base_packet["people"],
+        goal=goal,
+        semantic_query=semantic_query,
+        require_semantic_embedding=require_semantic_embedding,
+        research_refs=research_refs,
+    )
 
     refresh_actions_by_email: dict[str, list[dict[str, Any]]] = {}
     if refresh_missing_evidence is not None:
@@ -382,6 +414,8 @@ def prepare_ask_network_packet(
                 actual_employee_count_max=actual_employee_count_max,
                 consultant_count_min=consultant_count_min,
                 consultant_count_max=consultant_count_max,
+                semantic_query_embedding=semantic_query_embedding,
+                sort=sort,
                 limit=limit,
                 research_context=research_context,
                 evidence_limit=evidence_limit,
@@ -390,6 +424,8 @@ def prepare_ask_network_packet(
             people = _decorate_people(
                 base_packet["people"],
                 goal=goal,
+                semantic_query=semantic_query,
+                require_semantic_embedding=require_semantic_embedding,
                 research_refs=research_refs,
                 refresh_actions_by_email=refresh_actions_by_email,
             )
@@ -399,7 +435,7 @@ def prepare_ask_network_packet(
         "contract_version": ASK_NETWORK_CONTRACT_VERSION,
         "query": {
             "goal": goal,
-            "search_mode": "history_backed",
+            "search_mode": "history_backed_semantic" if semantic_query_embedding is not None else "history_backed",
             "constraints": {
                 "actual_employee_count_min": actual_employee_count_min,
                 "actual_employee_count_max": actual_employee_count_max,
@@ -407,9 +443,10 @@ def prepare_ask_network_packet(
                 "consultant_count_max": consultant_count_max,
                 "known_people_at_company_min": None,
                 "known_people_at_company_max": None,
-                "semantic_query": None,
-                "semantic_provider": None,
-                "embedding_model": None,
+                "semantic_query": semantic_query,
+                "semantic_provider": semantic_provider,
+                "embedding_model": embedding_model,
+                "sort": sort,
             },
             "limits": {
                 "candidate_limit": limit,

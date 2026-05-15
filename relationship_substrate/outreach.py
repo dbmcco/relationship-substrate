@@ -114,6 +114,8 @@ def prepare_history_backed_outreach_proposal_packet(
     actual_employee_count_max: int | None = None,
     consultant_count_min: int | None = None,
     consultant_count_max: int | None = None,
+    semantic_query_embedding: list[float] | None = None,
+    sort: str | None = None,
     limit: int = 10,
     research_context: Any | None = None,
     evidence_limit: int = 10,
@@ -125,6 +127,8 @@ def prepare_history_backed_outreach_proposal_packet(
         actual_employee_count_max=actual_employee_count_max,
         consultant_count_min=consultant_count_min,
         consultant_count_max=consultant_count_max,
+        semantic_query_embedding=semantic_query_embedding,
+        sort=sort,
         limit=limit,
     )
     emails = [hit["email"] for hit in search_hits]
@@ -157,6 +161,8 @@ def prepare_history_backed_outreach_proposal_packet(
             "actual_employee_count_max": actual_employee_count_max,
             "consultant_count_min": consultant_count_min,
             "consultant_count_max": consultant_count_max,
+            "semantic_query_embedding_present": semantic_query_embedding is not None,
+            "sort": sort,
             "limit": limit,
         },
         "count": len(people),
