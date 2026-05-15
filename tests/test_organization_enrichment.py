@@ -221,6 +221,7 @@ def test_history_backed_organization_worklist_excludes_known_non_target_domains_
             {"email": "five@intempio.us", "display_name": "Intempio US Person", "message_count": 10},
             {"email": "six@intempio.com", "display_name": "Intempio Person", "message_count": 9},
             {"email": "seven@mcco.us", "display_name": "MCCO Person", "message_count": 8},
+            {"email": "eight@linkedin.com", "display_name": "LinkedIn Notification", "message_count": 7},
         ],
         self_aliases=set(),
         skipped_domains=set(),
@@ -237,6 +238,7 @@ def test_history_backed_organization_worklist_excludes_known_non_target_domains_
     assert "intempio.us" not in domains
     assert "intempio.com" not in domains
     assert "mcco.us" not in domains
+    assert "linkedin.com" not in domains
 
 
 def test_history_backed_organization_worklist_filters_system_senders_and_dedupes_people(database_url):
@@ -368,3 +370,42 @@ def test_history_backed_organization_worklist_can_return_only_missing_enrichment
         row["company_name"] for row in rows if row["company_name"] in {enriched_company, missing_company}
     }
     assert current_company_names == {missing_company}
+
+
+def test_history_backed_organization_worklist_treats_source_only_enrichment_as_missing(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    company = f"Partial Enrichment Co {run_id}"
+    domain = f"partial-enrichment-{run_id}.example"
+    _curated_contact(
+        database_url,
+        email=f"one@{domain}",
+        title="Consultant",
+        company=company,
+    )
+    ingest_msgvault_sender_rows(
+        database_url,
+        [{"email": f"one@{domain}", "display_name": "Partial Person", "message_count": 1000}],
+        self_aliases=set(),
+        skipped_domains=set(),
+    )
+    materialize_msgvault_senders(database_url)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=company,
+        domain=domain,
+        source_name="perplexity_research",
+        source_url="https://example.com/source-only",
+        provenance_status="external_research",
+    )
+
+    rows = history_backed_organization_worklist(
+        database_url,
+        limit=1000,
+        skipped_domains=set(),
+        missing_enrichment_only=True,
+    )
+
+    current = next(row for row in rows if row["domain"] == domain)
+    assert current["has_enrichment"] is False
+    assert "missing_organization_enrichment" in current["enrichment_reasons"]

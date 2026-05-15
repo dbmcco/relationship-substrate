@@ -18,6 +18,7 @@ DEFAULT_SKIPPED_ORGANIZATION_DOMAINS = {
     "intempio.com",
     "intempio.us",
     "lehigh.edu",
+    "linkedin.com",
     "live.com",
     "me.com",
     "mcco.us",
@@ -29,6 +30,14 @@ DEFAULT_SKIPPED_ORGANIZATION_DOMAINS = {
     "thepracticalaccountant.com",
     "yahoo.com",
 }
+
+ENRICHMENT_VALUE_FIELDS = (
+    "company_type",
+    "employee_count_label",
+    "employee_count_min",
+    "employee_count_max",
+    "consultant_count_estimate",
+)
 
 
 def _clean_text(value: object) -> str:
@@ -76,6 +85,12 @@ def _enrichment_reasons(
     if known_people_count > 1:
         reasons.append("multiple_known_people")
     return reasons
+
+
+def _has_actionable_enrichment(enrichment: dict[str, Any] | None) -> bool:
+    if not enrichment:
+        return False
+    return any(enrichment.get(field) not in (None, "") for field in ENRICHMENT_VALUE_FIELDS)
 
 
 def upsert_organization_enrichment(
@@ -190,7 +205,7 @@ def organization_enrichment_by_name(database_url: str) -> dict[str, dict[str, An
             rows = cur.fetchall()
     enrichments: dict[str, dict[str, Any]] = {}
     for name, domain, enrichment in rows:
-        if enrichment is None:
+        if not _has_actionable_enrichment(enrichment):
             continue
         enrichments[name] = enrichment
         if domain:
