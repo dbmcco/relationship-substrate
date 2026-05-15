@@ -11,7 +11,11 @@ from relationship_substrate.cli import ingest_msgvault_sender_rows
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
 from relationship_substrate.db import run_migrations
 from relationship_substrate.materialize import materialize_msgvault_correspondence, materialize_msgvault_senders
-from relationship_substrate.network_ask import prepare_ask_network_packet, validate_ask_network_recommendations
+from relationship_substrate.network_ask import (
+    prepare_ask_network_packet,
+    tone_state_worklist_from_ask_packet,
+    validate_ask_network_recommendations,
+)
 from relationship_substrate.organizations import upsert_organization_enrichment
 from relationship_substrate.repositories import upsert_evidence_ref, upsert_source_event
 
@@ -190,6 +194,88 @@ def test_ask_network_cli_accepts_semantic_query_and_reports_embedding_readiness(
     assert "missing:person_embedding" in packet["readiness"]["warnings"]
     assert person_packet["search_hit"]["semantic"]["has_person_embedding"] is False
     assert person_packet["model_inputs"]["semantic_query"] == "medical communications consulting"
+
+
+def test_tone_state_worklist_from_ask_packet_exports_missing_tone_candidates(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    unique_count = 1_400_000 + int(run_id[:6], 16)
+    domain = f"ask-tone-worklist-{run_id}.example"
+    email = f"consultant@{domain}"
+    evidence_ref_id = _relationship_evidence(database_url, email=email)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_medcoms_consultancy",
+        employee_count_min=unique_count,
+        employee_count_max=unique_count,
+        consultant_count_estimate=unique_count,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+    packet = prepare_ask_network_packet(
+        database_url,
+        goal="Find consultants at small firms.",
+        actual_employee_count_min=unique_count,
+        actual_employee_count_max=unique_count,
+        consultant_count_min=unique_count,
+        consultant_count_max=unique_count,
+        limit=1,
+    )
+
+    worklist = tone_state_worklist_from_ask_packet(packet)
+
+    assert worklist["worklist_stage"] == "relationship_tone_tenor_worklist"
+    assert worklist["count"] == 1
+    row = worklist["people"][0]
+    assert row["email"] == email
+    assert row["candidate_evidence_refs"] == [evidence_ref_id]
+    assert row["proposal_contract"]["state_kind"] == "relationship_tone_tenor"
+    assert row["model_contract"]["owner"] == "model"
+    assert "draft_email" not in row
+
+
+def test_tone_state_worklist_cli_reads_ask_packet_file(database_url, tmp_path, monkeypatch, capsys):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    unique_count = 1_500_000 + int(run_id[:6], 16)
+    domain = f"ask-tone-cli-{run_id}.example"
+    email = f"consultant@{domain}"
+    _relationship_evidence(database_url, email=email)
+    upsert_organization_enrichment(
+        database_url,
+        company_name=domain,
+        company_type="small_medcoms_consultancy",
+        employee_count_min=unique_count,
+        employee_count_max=unique_count,
+        consultant_count_estimate=unique_count,
+        source_name="test_fixture",
+        provenance_status="test",
+    )
+    packet = prepare_ask_network_packet(
+        database_url,
+        goal="Find consultants at small firms.",
+        actual_employee_count_min=unique_count,
+        actual_employee_count_max=unique_count,
+        consultant_count_min=unique_count,
+        consultant_count_max=unique_count,
+        limit=1,
+    )
+    packet_path = tmp_path / "ask-packet.json"
+    packet_path.write_text(json.dumps(packet), encoding="utf-8")
+
+    worklist = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "export-tone-state-worklist",
+        "--ask-packet",
+        str(packet_path),
+    )
+
+    assert worklist["count"] == 1
+    assert worklist["people"][0]["email"] == email
 
 
 def test_ask_network_refreshes_missing_evidence_and_rebuilds_packet(database_url):

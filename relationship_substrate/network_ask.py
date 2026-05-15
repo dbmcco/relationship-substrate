@@ -525,6 +525,51 @@ def evaluate_ask_network_packet(packet: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def tone_state_worklist_from_ask_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    people: list[dict[str, Any]] = []
+    model_contract = packet.get("relationship_tone_model_contract") or {}
+    for person in packet.get("people") or []:
+        readiness = person.get("packet_readiness") or {}
+        missing = readiness.get("missing") or []
+        if "relationship_tone_tenor_state" not in missing:
+            continue
+        relationship_intelligence = person.get("relationship_intelligence") or {}
+        evidence_refs = _evidence_ref_ids(relationship_intelligence)
+        people.append(
+            {
+                "email": person.get("email"),
+                "name": ((person.get("relationship_tone_tenor") or {}).get("person") or {}).get(
+                    "display_name"
+                )
+                or person.get("name"),
+                "latest_interaction_at": (person.get("evidence_summary") or {}).get(
+                    "latest_interaction_at"
+                ),
+                "relationship": (person.get("search_hit") or {}).get("relationship") or {},
+                "organization_context": person.get("organization_context") or {},
+                "relationship_intelligence": relationship_intelligence,
+                "relationship_tone_tenor": person.get("relationship_tone_tenor") or {},
+                "candidate_evidence_refs": evidence_refs,
+                "proposal_contract": {
+                    "state_kind": "relationship_tone_tenor",
+                    "required_fields": ["state_kind", "summary", "rationale", "evidence_refs"],
+                    "persist_command": "relationship-substrate persist-relationship-state",
+                    "evidence_ref_requirement": "Every proposal must cite supplied evidence refs.",
+                },
+                "model_contract": model_contract,
+            }
+        )
+    return {
+        "worklist_stage": "relationship_tone_tenor_worklist",
+        "source_ask_stage": packet.get("ask_stage"),
+        "source_contract_version": packet.get("contract_version"),
+        "query": packet.get("query") or {},
+        "count": len(people),
+        "people": people,
+        "model_contract": model_contract,
+    }
+
+
 def validate_ask_network_recommendations(
     packet: dict[str, Any],
     recommendations: list[dict[str, Any]],

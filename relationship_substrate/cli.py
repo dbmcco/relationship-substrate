@@ -34,6 +34,7 @@ from relationship_substrate.materialize import (
 from relationship_substrate.network_ask import (
     evaluate_ask_network_packet,
     prepare_ask_network_packet,
+    tone_state_worklist_from_ask_packet,
     validate_ask_network_recommendations,
 )
 from relationship_substrate.network_feedback import list_network_feedback, record_network_feedback
@@ -174,6 +175,8 @@ def build_parser() -> argparse.ArgumentParser:
     eval_ask_network.add_argument("--semantic-provider", choices=["ollama", "openai", "hash"], default="ollama")
     eval_ask_network.add_argument("--embedding-model", default=None)
     eval_ask_network.add_argument("--sort", choices=["relationship", "semantic"], default=None)
+    tone_worklist = subparsers.add_parser("export-tone-state-worklist")
+    tone_worklist.add_argument("--ask-packet", required=True)
     persist_state = subparsers.add_parser("persist-relationship-state")
     persist_state.add_argument("--email", required=True)
     persist_state.add_argument("--proposal", required=True)
@@ -855,6 +858,10 @@ def main() -> int:
         if args.save_packet:
             packet["packet_record"] = persist_ask_network_packet(settings.database_url, packet)
         _print_json(evaluate_ask_network_packet(packet))
+        return 0
+    if args.command == "export-tone-state-worklist":
+        packet = json.loads(Path(args.ask_packet).read_text(encoding="utf-8"))
+        _print_json(tone_state_worklist_from_ask_packet(packet))
         return 0
     if args.command == "persist-relationship-state":
         run_migrations(settings.database_url)

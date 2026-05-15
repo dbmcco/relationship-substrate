@@ -210,6 +210,15 @@ It must preserve:
 
 If no persisted tone state exists, the packet should report that as missing or stale. Code must not synthesize a tone summary.
 
+Agents can turn those missing tone-state candidates into a separate worklist without re-running the ask:
+
+```text
+relationship-substrate export-tone-state-worklist \
+  --ask-packet path/to/ask-packet.json
+```
+
+The worklist contains only candidates whose packet readiness is missing `relationship_tone_tenor_state`, plus the relationship evidence refs and model contract needed to draft a persisted `relationship_tone_tenor` proposal. The model drafts the interpretation; code only validates and persists an approved proposal through `persist-relationship-state`.
+
 ### evidence_summary
 
 Mechanical rollup for quick inspection:
@@ -222,6 +231,7 @@ Mechanical rollup for quick inspection:
   "calendar_interaction_count": 0,
   "has_direct_relationship_evidence": true,
   "has_prior_tone_state": true,
+  "has_semantic_embedding": true,
   "has_organization_enrichment": true
 }
 ```
