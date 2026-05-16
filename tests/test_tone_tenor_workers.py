@@ -54,6 +54,32 @@ def _insert_correspondence_evidence(
     return str(evidence_ref_id)
 
 
+def _insert_relationship_edge_without_evidence(database_url: str, *, email: str) -> None:
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.person (
+                  display_name, primary_email, source_posture, provenance_status
+                )
+                VALUES ('No Evidence Person', %s, 'test', 'test')
+                RETURNING id
+                """,
+                (email,),
+            )
+            person_id = cur.fetchone()[0]
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.relationship_edge (
+                  person_id, interaction_count, metadata
+                )
+                VALUES (%s, 10, '{"source":"test"}')
+                """,
+                (person_id,),
+            )
+        conn.commit()
+
+
 def test_missing_tone_tenor_emails_returns_people_with_interactions(database_url):
     run_migrations(database_url)
     email = f"missing-tone-{uuid4().hex}@example.com"
@@ -65,6 +91,16 @@ def test_missing_tone_tenor_emails_returns_people_with_interactions(database_url
     assert email in emails
 
 
+def test_missing_tone_tenor_emails_requires_usable_evidence(database_url):
+    run_migrations(database_url)
+    email = f"tone-no-evidence-{uuid4().hex}@example.com"
+    _insert_relationship_edge_without_evidence(database_url, email=email)
+
+    emails = missing_tone_tenor_emails(database_url, limit=100000)
+
+    assert email not in emails
+
+
 def test_missing_tone_tenor_emails_skips_automated_contacts(database_url):
     run_migrations(database_url)
     human_email = f"human-tone-{uuid4().hex}@example.com"
@@ -73,6 +109,10 @@ def test_missing_tone_tenor_emails_skips_automated_contacts(database_url):
         f"drive-shares-noreply-{uuid4().hex}@google.com",
         f"p2p-helpdesk.noreply-{uuid4().hex}@novartis.com",
         f"email@emails-{uuid4().hex}.example.com",
+        f"quickbooks@notification-{uuid4().hex}.example.com",
+        f"service@bluevine-{uuid4().hex}.example.com",
+        f"team@mint-{uuid4().hex}.example.com",
+        f"johnstonandmurphy@e-{uuid4().hex}.example.com",
     ]
     _insert_correspondence_evidence(database_url, email=human_email)
     for automated_email in automated_emails:

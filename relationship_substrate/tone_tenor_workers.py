@@ -127,6 +127,15 @@ def missing_tone_tenor_emails(database_url: str, *, limit: int = 25) -> list[str
                   ON e.person_id = p.id
                 WHERE p.primary_email IS NOT NULL
                 AND COALESCE(e.interaction_count, 0) > 0
+                AND EXISTS (
+                  SELECT 1
+                  FROM relationship_substrate.interaction i
+                  JOIN relationship_substrate.evidence_ref er
+                    ON er.source_event_id = i.source_event_id
+                  WHERE i.metadata->>'sender_email' = p.primary_email
+                  OR i.metadata->>'relationship_email' = p.primary_email
+                  OR i.metadata->'attendee_emails' ? p.primary_email
+                )
                 AND NOT EXISTS (
                   SELECT 1
                   FROM relationship_substrate.relationship_state rs

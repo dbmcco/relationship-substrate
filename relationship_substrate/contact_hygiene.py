@@ -11,6 +11,14 @@ AUTOMATED_CONTACT_DOMAINS = {
     "linkedin.com",
 }
 
+AUTOMATED_LOCALPARTS = {
+    "email",
+    "express",
+    "quickbooks",
+    "service",
+    "team",
+}
+
 
 def _clean_email(value: object) -> str:
     return str(value or "").strip().lower()
@@ -30,6 +38,10 @@ def is_automated_contact_email(email: object) -> bool:
     if domain in skipped_domains:
         return True
     if domain.startswith(("emails.", "emails-", "email.")):
+        return True
+    if domain.startswith(("e.", "e-", "mail.")):
+        return True
+    if localpart in AUTOMATED_LOCALPARTS or normalized_localpart in AUTOMATED_LOCALPARTS:
         return True
     if localpart in DEFAULT_SKIPPED_SYSTEM_LOCALPARTS or normalized_localpart in DEFAULT_SKIPPED_SYSTEM_LOCALPARTS:
         return True
