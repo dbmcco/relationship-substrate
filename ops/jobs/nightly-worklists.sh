@@ -9,12 +9,14 @@ REPORT_DIR="output/nightly/${RUN_ID}"
 ORGANIZATION_WORKLIST_LIMIT="${RELATIONSHIP_SUBSTRATE_ORGANIZATION_WORKLIST_LIMIT:-250}"
 ORGANIZATION_RESEARCH_LIMIT="${RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_LIMIT:-25}"
 ORGANIZATION_RESEARCH_APPLY="${RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_APPLY:-1}"
-TONE_TENOR_LIMIT="${RELATIONSHIP_SUBSTRATE_TONE_TENOR_LIMIT:-20}"
+TONE_TENOR_LIMIT="${RELATIONSHIP_SUBSTRATE_TONE_TENOR_LIMIT:-0}"
 TONE_TENOR_APPLY="${RELATIONSHIP_SUBSTRATE_TONE_TENOR_APPLY:-1}"
+TONE_TENOR_ENABLED="${RELATIONSHIP_SUBSTRATE_TONE_TENOR_ENABLED:-0}"
 TONE_TENOR_MODEL="${RELATIONSHIP_SUBSTRATE_TONE_MODEL:-hermes3:8b}"
 TONE_TENOR_EVIDENCE_LIMIT="${RELATIONSHIP_SUBSTRATE_TONE_EVIDENCE_LIMIT:-8}"
-STRENGTH_LIMIT="${RELATIONSHIP_SUBSTRATE_STRENGTH_LIMIT:-20}"
+STRENGTH_LIMIT="${RELATIONSHIP_SUBSTRATE_STRENGTH_LIMIT:-0}"
 STRENGTH_APPLY="${RELATIONSHIP_SUBSTRATE_STRENGTH_APPLY:-1}"
+STRENGTH_ENABLED="${RELATIONSHIP_SUBSTRATE_STRENGTH_ENABLED:-0}"
 STRENGTH_MODEL="${RELATIONSHIP_SUBSTRATE_STRENGTH_MODEL:-hermes3:8b}"
 STRENGTH_EVIDENCE_LIMIT="${RELATIONSHIP_SUBSTRATE_STRENGTH_EVIDENCE_LIMIT:-8}"
 ORGANIZATION_NEWS_LIMIT="${RELATIONSHIP_SUBSTRATE_ORGANIZATION_NEWS_LIMIT:-0}"
@@ -40,29 +42,39 @@ if [[ "$ORGANIZATION_RESEARCH_APPLY" == "1" || "$ORGANIZATION_RESEARCH_APPLY" ==
 fi
 "${organization_research_cmd[@]}" > "${REPORT_DIR}/organization_research_stdout.json"
 
-tone_tenor_cmd=(
-  uv run relationship-substrate run-relationship-tone-analysis
-  --output-dir output/tone-tenor
-  --limit "$TONE_TENOR_LIMIT"
-  --evidence-limit "$TONE_TENOR_EVIDENCE_LIMIT"
-  --model "$TONE_TENOR_MODEL"
-)
-if [[ "$TONE_TENOR_APPLY" == "1" || "$TONE_TENOR_APPLY" == "true" ]]; then
-  tone_tenor_cmd+=(--apply)
+if [[ "$TONE_TENOR_ENABLED" == "1" || "$TONE_TENOR_ENABLED" == "true" ]]; then
+  tone_tenor_cmd=(
+    uv run relationship-substrate run-relationship-tone-analysis
+    --output-dir output/tone-tenor
+    --limit "$TONE_TENOR_LIMIT"
+    --evidence-limit "$TONE_TENOR_EVIDENCE_LIMIT"
+    --model "$TONE_TENOR_MODEL"
+  )
+  if [[ "$TONE_TENOR_APPLY" == "1" || "$TONE_TENOR_APPLY" == "true" ]]; then
+    tone_tenor_cmd+=(--apply)
+  fi
+  "${tone_tenor_cmd[@]}" > "${REPORT_DIR}/tone_tenor_stdout.json"
+else
+  printf '{"ok":true,"skipped":true,"selected":0,"applied":0,"failed":0,"reason":"RELATIONSHIP_SUBSTRATE_TONE_TENOR_ENABLED=0"}\n' \
+    > "${REPORT_DIR}/tone_tenor_stdout.json"
 fi
-"${tone_tenor_cmd[@]}" > "${REPORT_DIR}/tone_tenor_stdout.json"
 
-strength_cmd=(
-  uv run relationship-substrate run-relationship-strength-analysis
-  --output-dir output/relationship-strength
-  --limit "$STRENGTH_LIMIT"
-  --evidence-limit "$STRENGTH_EVIDENCE_LIMIT"
-  --model "$STRENGTH_MODEL"
-)
-if [[ "$STRENGTH_APPLY" == "1" || "$STRENGTH_APPLY" == "true" ]]; then
-  strength_cmd+=(--apply)
+if [[ "$STRENGTH_ENABLED" == "1" || "$STRENGTH_ENABLED" == "true" ]]; then
+  strength_cmd=(
+    uv run relationship-substrate run-relationship-strength-analysis
+    --output-dir output/relationship-strength
+    --limit "$STRENGTH_LIMIT"
+    --evidence-limit "$STRENGTH_EVIDENCE_LIMIT"
+    --model "$STRENGTH_MODEL"
+  )
+  if [[ "$STRENGTH_APPLY" == "1" || "$STRENGTH_APPLY" == "true" ]]; then
+    strength_cmd+=(--apply)
+  fi
+  "${strength_cmd[@]}" > "${REPORT_DIR}/relationship_strength_stdout.json"
+else
+  printf '{"ok":true,"skipped":true,"selected":0,"applied":0,"failed":0,"reason":"RELATIONSHIP_SUBSTRATE_STRENGTH_ENABLED=0"}\n' \
+    > "${REPORT_DIR}/relationship_strength_stdout.json"
 fi
-"${strength_cmd[@]}" > "${REPORT_DIR}/relationship_strength_stdout.json"
 
 if [[ "$ORGANIZATION_NEWS_LIMIT" != "0" ]]; then
   organization_news_cmd=(

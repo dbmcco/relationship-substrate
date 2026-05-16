@@ -6,21 +6,21 @@ inspect, and change them without relying on hidden machine scheduler state.
 ## Jobs
 
 - `substrate-cycle.sh`: one operational cycle. Refreshes msgvault/calendar/next_up materialization,
-  drains supported embedding queues, writes status, organization enrichment worklist, and the
-  current North Star tone-state worklist.
+  writes status, organization enrichment worklist, and the current North Star tone-state worklist.
+  Local embedding backfill is disabled by default for laptop power safety.
 - `substrate-loop.sh`: runs `substrate-cycle.sh` repeatedly. Default interval: 6 hours.
 - `nightly-worklists.sh`: exports the current enrichment and tone worklists without mutating ingest.
   It also runs a bounded organization research pass. Default: 25 organizations, apply enabled.
-  It runs a bounded local-Ollama tone/tenor pass. Default: 20 people, apply enabled,
-  model `hermes3:8b`.
-  It runs a bounded local-Ollama relationship-strength pass. Default: 20 people, apply enabled,
-  model `hermes3:8b`.
+  Local-Ollama tone/tenor and relationship-strength passes are disabled by default for
+  laptop power safety. Enable them explicitly when plugged into sufficient power.
   It can run bounded organization-news research snapshots when
   `RELATIONSHIP_SUBSTRATE_ORGANIZATION_NEWS_LIMIT` is non-zero.
 - `nightly-worklists-loop.sh`: runs `nightly-worklists.sh` repeatedly. Default interval: 12 hours.
 - `catchup-refresh-loop.sh`: runs `nightly-worklists.sh` continuously until organization enrichment,
   tone/tenor, and relationship-strength queues are clean. Once clean, it sleeps 12 hours between
-  refreshes and enables bounded organization-news research.
+  refreshes and enables bounded organization-news research. If local-Ollama tone/strength work is
+  disabled, those queues remain visible but the loop sleeps on the 12-hour interval once
+  organization enrichment is drained, until an explicitly enabled local-model pass drains them.
 
 ## Inputs
 
@@ -53,20 +53,24 @@ bounded by `RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_LIMIT` and can be made 
 RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_APPLY=0
 ```
 
-Tone/tenor can be made dry-run or scaled with:
+Tone/tenor defaults to disabled to avoid local Ollama CPU/power spikes. It can be enabled, made
+dry-run, or scaled with:
 
 ```bash
+RELATIONSHIP_SUBSTRATE_TONE_TENOR_ENABLED=1
 RELATIONSHIP_SUBSTRATE_TONE_TENOR_APPLY=0
-RELATIONSHIP_SUBSTRATE_TONE_TENOR_LIMIT=20
+RELATIONSHIP_SUBSTRATE_TONE_TENOR_LIMIT=5
 RELATIONSHIP_SUBSTRATE_TONE_EVIDENCE_LIMIT=8
 RELATIONSHIP_SUBSTRATE_TONE_MODEL=hermes3:8b
 ```
 
-Relationship strength can be made dry-run or scaled with:
+Relationship strength defaults to disabled to avoid local Ollama CPU/power spikes. It can be
+enabled, made dry-run, or scaled with:
 
 ```bash
+RELATIONSHIP_SUBSTRATE_STRENGTH_ENABLED=1
 RELATIONSHIP_SUBSTRATE_STRENGTH_APPLY=0
-RELATIONSHIP_SUBSTRATE_STRENGTH_LIMIT=20
+RELATIONSHIP_SUBSTRATE_STRENGTH_LIMIT=5
 RELATIONSHIP_SUBSTRATE_STRENGTH_EVIDENCE_LIMIT=8
 RELATIONSHIP_SUBSTRATE_STRENGTH_MODEL=hermes3:8b
 ```
@@ -78,4 +82,12 @@ RELATIONSHIP_SUBSTRATE_CATCHUP_INTERVAL_SECONDS=60
 RELATIONSHIP_SUBSTRATE_REFRESH_INTERVAL_SECONDS=43200
 RELATIONSHIP_SUBSTRATE_STEADY_ORGANIZATION_NEWS_LIMIT=25
 RELATIONSHIP_SUBSTRATE_PERPLEXITY_NEWS_MODEL=sonar-pro
+```
+
+Local embedding backfill can be enabled explicitly with:
+
+```bash
+RELATIONSHIP_SUBSTRATE_AUTONOMOUS_EMBEDDINGS_ENABLED=1
+RELATIONSHIP_SUBSTRATE_EMBED_PROVIDER=ollama
+RELATIONSHIP_SUBSTRATE_EMBED_LIMIT=25
 ```

@@ -17,6 +17,8 @@ SENDER_LIMIT="${RELATIONSHIP_SUBSTRATE_SENDER_LIMIT:-500}"
 CORRESPONDENCE_FROM_SENDERS="${RELATIONSHIP_SUBSTRATE_CORRESPONDENCE_FROM_SENDERS:-25}"
 CORRESPONDENCE_MESSAGE_LIMIT="${RELATIONSHIP_SUBSTRATE_CORRESPONDENCE_MESSAGE_LIMIT:-50}"
 EMBED_LIMIT="${RELATIONSHIP_SUBSTRATE_EMBED_LIMIT:-50}"
+EMBED_PROVIDER="${RELATIONSHIP_SUBSTRATE_EMBED_PROVIDER:-ollama}"
+AUTONOMOUS_EMBEDDINGS_ENABLED="${RELATIONSHIP_SUBSTRATE_AUTONOMOUS_EMBEDDINGS_ENABLED:-0}"
 MAX_EMBED_ITERATIONS="${RELATIONSHIP_SUBSTRATE_MAX_EMBED_ITERATIONS:-100}"
 NORTH_STAR_LIMIT="${RELATIONSHIP_SUBSTRATE_NORTH_STAR_LIMIT:-25}"
 ORGANIZATION_WORKLIST_LIMIT="${RELATIONSHIP_SUBSTRATE_ORGANIZATION_WORKLIST_LIMIT:-250}"
@@ -52,17 +54,23 @@ if [[ " ${pipeline_cmd[*]} " != *" --next-up-path "* ]]; then
   exit 2
 fi
 
+autonomous_cmd=(
+  uv run relationship-substrate run-autonomous-backfill
+  --output-dir output/autonomous
+  --max-iterations "$MAX_EMBED_ITERATIONS"
+  --sleep-seconds 15
+  --embed-provider "$EMBED_PROVIDER"
+  --embed-limit "$EMBED_LIMIT"
+  --organization-worklist-limit "$ORGANIZATION_WORKLIST_LIMIT"
+  --north-star-limit "$NORTH_STAR_LIMIT"
+)
+if [[ "$AUTONOMOUS_EMBEDDINGS_ENABLED" != "1" && "$AUTONOMOUS_EMBEDDINGS_ENABLED" != "true" ]]; then
+  autonomous_cmd+=(--skip-embeddings)
+fi
+
 "${pipeline_cmd[@]}" > "${REPORT_DIR}/pipeline_report_stdout.json"
 
-uv run relationship-substrate run-autonomous-backfill \
-  --output-dir output/autonomous \
-  --max-iterations "$MAX_EMBED_ITERATIONS" \
-  --sleep-seconds 15 \
-  --embed-provider ollama \
-  --embed-limit "$EMBED_LIMIT" \
-  --organization-worklist-limit "$ORGANIZATION_WORKLIST_LIMIT" \
-  --north-star-limit "$NORTH_STAR_LIMIT" \
-  > "${REPORT_DIR}/autonomous_backfill_stdout.json"
+"${autonomous_cmd[@]}" > "${REPORT_DIR}/autonomous_backfill_stdout.json"
 
 uv run relationship-substrate substrate-status \
   --organization-worklist-limit "$ORGANIZATION_WORKLIST_LIMIT" \
