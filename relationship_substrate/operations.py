@@ -384,6 +384,34 @@ def substrate_status(
                 "persisted_tone_tenor_states": persisted_tone_states,
                 "missing_people_count": missing_tone_people,
             }
+            cur.execute(
+                """
+                SELECT count(*)::int
+                FROM relationship_substrate.person p
+                JOIN relationship_substrate.relationship_edge e
+                  ON e.person_id = p.id
+                WHERE COALESCE(e.interaction_count, 0) > 0
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM relationship_substrate.relationship_state rs
+                  WHERE rs.person_id = p.id
+                  AND rs.state_kind = 'relationship_strength'
+                )
+                """
+            )
+            missing_strength_people = int(cur.fetchone()[0])
+            cur.execute(
+                """
+                SELECT count(*)::int
+                FROM relationship_substrate.relationship_state
+                WHERE state_kind = 'relationship_strength'
+                """
+            )
+            persisted_strength_states = int(cur.fetchone()[0])
+            relationship_strength_state = {
+                "persisted_relationship_strength_states": persisted_strength_states,
+                "missing_people_count": missing_strength_people,
+            }
 
     organization_worklist = history_backed_organization_worklist(
         database_url,
@@ -400,6 +428,9 @@ def substrate_status(
         },
         "relationship_tone_tenor_state": {
             "count": tone_state["missing_people_count"],
+        },
+        "relationship_strength_state": {
+            "count": relationship_strength_state["missing_people_count"],
         },
         "person_embeddings": {
             "count": embeddings["people"]["missing"],
@@ -426,6 +457,7 @@ def substrate_status(
             "feedback": optional_counts["network_feedback"],
         },
         "tone_state": tone_state,
+        "relationship_strength_state": relationship_strength_state,
         "actionable_queues": queues,
         "background_sync": {
             "command": "relationship-substrate run-network-pipeline",

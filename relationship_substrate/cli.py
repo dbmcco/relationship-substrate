@@ -62,10 +62,11 @@ from relationship_substrate.outreach import (
 from relationship_substrate.relationship_intelligence import (
     persist_relationship_state,
     prepare_relationship_intelligence_packet,
+    prepare_relationship_strength_analysis_packet,
     prepare_relationship_tone_tenor_analysis_packet,
 )
 from relationship_substrate.research import research_context_from_snapshots, upsert_research_snapshot
-from relationship_substrate.research_workers import run_organization_enrichment_research
+from relationship_substrate.research_workers import run_organization_enrichment_research, run_organization_news_research
 from relationship_substrate.repositories import (
     identity_candidate_counts,
     operating_picture_rows,
@@ -74,6 +75,7 @@ from relationship_substrate.repositories import (
     upsert_source_event,
 )
 from relationship_substrate.search import DEFAULT_ROLE_KEYWORDS, search_history_backed_people, search_people
+from relationship_substrate.relationship_strength_workers import run_relationship_strength_analysis
 from relationship_substrate.tone_tenor_workers import run_relationship_tone_tenor_analysis
 
 
@@ -135,6 +137,17 @@ def build_parser() -> argparse.ArgumentParser:
     run_tone_analysis.add_argument("--prior-state-limit", type=int, default=3)
     run_tone_analysis.add_argument("--model", default=None)
     run_tone_analysis.add_argument("--apply", action="store_true")
+    prepare_strength_analysis = subparsers.add_parser("prepare-relationship-strength-analysis")
+    prepare_strength_analysis.add_argument("--email", action="append", required=True)
+    prepare_strength_analysis.add_argument("--evidence-limit", type=int, default=10)
+    prepare_strength_analysis.add_argument("--prior-state-limit", type=int, default=3)
+    run_strength_analysis = subparsers.add_parser("run-relationship-strength-analysis")
+    run_strength_analysis.add_argument("--output-dir", default="output/relationship-strength")
+    run_strength_analysis.add_argument("--limit", type=int, default=10)
+    run_strength_analysis.add_argument("--evidence-limit", type=int, default=8)
+    run_strength_analysis.add_argument("--prior-state-limit", type=int, default=3)
+    run_strength_analysis.add_argument("--model", default=None)
+    run_strength_analysis.add_argument("--apply", action="store_true")
     prepare_outreach = subparsers.add_parser("prepare-outreach-proposal")
     prepare_outreach.add_argument("--email", action="append", required=True)
     prepare_outreach.add_argument("--research-context", default=None)
@@ -251,6 +264,10 @@ def build_parser() -> argparse.ArgumentParser:
     org_research.add_argument("--output-dir", default="output/research/organizations")
     org_research.add_argument("--limit", type=int, default=5)
     org_research.add_argument("--apply", action="store_true")
+    org_news = subparsers.add_parser("run-organization-news-research")
+    org_news.add_argument("--output-dir", default="output/research/organization-news")
+    org_news.add_argument("--limit", type=int, default=5)
+    org_news.add_argument("--apply", action="store_true")
     research_import = subparsers.add_parser("import-research-snapshot")
     research_import.add_argument("--path", required=True)
     research_context = subparsers.add_parser("export-research-context")
@@ -758,6 +775,31 @@ def main() -> int:
             )
         )
         return 0
+    if args.command == "prepare-relationship-strength-analysis":
+        run_migrations(settings.database_url)
+        _print_json(
+            prepare_relationship_strength_analysis_packet(
+                settings.database_url,
+                emails=args.email,
+                evidence_limit=args.evidence_limit,
+                prior_state_limit=args.prior_state_limit,
+            )
+        )
+        return 0
+    if args.command == "run-relationship-strength-analysis":
+        run_migrations(settings.database_url)
+        _print_json(
+            run_relationship_strength_analysis(
+                settings.database_url,
+                output_dir=Path(args.output_dir),
+                limit=args.limit,
+                evidence_limit=args.evidence_limit,
+                prior_state_limit=args.prior_state_limit,
+                apply=args.apply,
+                model=args.model,
+            )
+        )
+        return 0
     if args.command == "prepare-outreach-proposal":
         run_migrations(settings.database_url)
         research_context = None
@@ -1019,6 +1061,20 @@ def main() -> int:
         run_migrations(settings.database_url)
         _print_json(
             run_organization_enrichment_research(
+                settings.database_url,
+                output_dir=Path(args.output_dir),
+                limit=args.limit,
+                apply=args.apply,
+                skipped_domains=set(settings.skipped_sender_domains),
+                skipped_system_localparts=set(settings.skipped_system_localparts),
+                skipped_system_prefixes=set(settings.skipped_system_prefixes),
+            )
+        )
+        return 0
+    if args.command == "run-organization-news-research":
+        run_migrations(settings.database_url)
+        _print_json(
+            run_organization_news_research(
                 settings.database_url,
                 output_dir=Path(args.output_dir),
                 limit=args.limit,

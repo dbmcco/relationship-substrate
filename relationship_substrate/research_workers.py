@@ -156,6 +156,30 @@ def _organization_research_prompt(company: dict[str, Any]) -> str:
     )
 
 
+def _organization_news_prompt(company: dict[str, Any]) -> str:
+    strongest_people = company.get("strongest_people") or []
+    people_hint = [
+        {
+            "name": person.get("name"),
+            "title": person.get("title"),
+        }
+        for person in strongest_people[:5]
+    ]
+    return (
+        "Research recent public news and meaningful current events for this organization "
+        "for a personal relationship intelligence system.\n"
+        "Return only a JSON object with these keys: summary, confidence, sources.\n"
+        "Use null when a sourced value is unavailable. Include source URLs in sources.\n"
+        "Do not update or infer static enrichment fields like employee count or company type.\n\n"
+        f"Organization: {company.get('company_name')}\n"
+        f"Domain: {company.get('domain')}\n"
+        f"Known interaction counts: email={company.get('email_interaction_count')}, "
+        f"calendar={company.get('calendar_interaction_count')}\n"
+        f"Sample titles: {company.get('sample_titles') or []}\n"
+        f"Known people hints: {people_hint}\n"
+    )
+
+
 def perplexity_research_organization(
     company: dict[str, Any],
     *,
@@ -202,6 +226,63 @@ def perplexity_research_organization(
         raise RuntimeError(f"Perplexity research request failed: {exc.code} {detail}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Perplexity research request failed: {exc}") from exc
+    data = json.loads(raw)
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    return {
+        "content": message.get("content") or "",
+        "citations": data.get("citations") or data.get("search_results") or [],
+        "model": data.get("model") or model,
+        "raw_response": data,
+    }
+
+
+def perplexity_research_organization_news(
+    company: dict[str, Any],
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+    endpoint: str | None = None,
+    timeout_seconds: int = 90,
+) -> dict[str, Any]:
+    api_key = api_key or os.environ.get("PERPLEXITY_API_KEY")
+    if not api_key:
+        raise RuntimeError("PERPLEXITY_API_KEY is required for organization news research")
+    model = model or os.environ.get("RELATIONSHIP_SUBSTRATE_PERPLEXITY_NEWS_MODEL", DEFAULT_PERPLEXITY_MODEL)
+    endpoint = endpoint or os.environ.get("RELATIONSHIP_SUBSTRATE_PERPLEXITY_ENDPOINT", DEFAULT_PERPLEXITY_ENDPOINT)
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a source-grounded current-news research analyst. "
+                        "Return JSON only. Preserve uncertainty as nulls."
+                    ),
+                },
+                {"role": "user", "content": _organization_news_prompt(company)},
+            ],
+            "temperature": 0.1,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Perplexity organization news request failed: {exc.code} {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Perplexity organization news request failed: {exc}") from exc
     data = json.loads(raw)
     choice = (data.get("choices") or [{}])[0]
     message = choice.get("message") or {}
@@ -300,4 +381,87 @@ def run_organization_enrichment_research(
         "output_dir": str(run_dir),
     }
     report["artifact"] = _write_json(run_dir / "organization_research_report.json", report)
+    return report
+
+
+def run_organization_news_research(
+    database_url: str,
+    *,
+    output_dir: Path,
+    limit: int = 5,
+    apply: bool = False,
+    research_company_news: ResearchCompany | None = None,
+    skipped_domains: set[str] | None = None,
+    skipped_system_localparts: set[str] | None = None,
+    skipped_system_prefixes: set[str] | None = None,
+) -> dict[str, Any]:
+    research_company_news = research_company_news or perplexity_research_organization_news
+    run_started_at = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = output_dir / run_started_at
+    companies = history_backed_organization_worklist(
+        database_url,
+        limit=limit,
+        skipped_domains=skipped_domains,
+        skipped_system_localparts=skipped_system_localparts,
+        skipped_system_prefixes=skipped_system_prefixes,
+        missing_enrichment_only=False,
+    )
+    snapshots: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    raw_results: list[dict[str, Any]] = []
+    for company in companies:
+        try:
+            research = research_company_news(company)
+            raw_results.append({"company": company, "research": research})
+            payload = parse_research_json(_clean_text(research.get("content")))
+            sources = _normalize_sources(payload.get("sources"), list(research.get("citations") or []))
+            if not sources:
+                raise ValueError("organization news research requires at least one source URL")
+            summary = _clean_text(payload.get("summary")) or _clean_text(research.get("content"))[:1000]
+            if not summary:
+                raise ValueError("organization news research requires summary")
+            if apply:
+                snapshot = upsert_research_snapshot(
+                    database_url,
+                    subject_type="organization_news",
+                    subject=company.get("domain") or company["company_name"],
+                    summary=summary,
+                    confidence=_clean_text(payload.get("confidence")) or "unknown",
+                    sources=sources,
+                    metadata={
+                        "company_name": company.get("company_name"),
+                        "domain": company.get("domain"),
+                        "model": _clean_text(research.get("model")) or None,
+                        "refresh_kind": "current_news",
+                    },
+                )
+                snapshots.append(snapshot)
+        except Exception as exc:  # noqa: BLE001 - failures are reported per work item.
+            failures.append(
+                {
+                    "company_name": company.get("company_name"),
+                    "domain": company.get("domain"),
+                    "error": str(exc),
+                }
+            )
+    artifacts = {
+        "worklist": _write_json(run_dir / "organization_news_worklist.json", companies),
+        "raw_results": _write_json(run_dir / "raw_results.json", raw_results),
+        "snapshots": _write_json(run_dir / "research_snapshots.json", snapshots),
+        "failures": _write_json(run_dir / "failures.json", failures),
+    }
+    report = {
+        "ok": not failures,
+        "run_started_at": run_started_at,
+        "apply": apply,
+        "worklist_count": len(companies),
+        "researched": len(raw_results),
+        "applied": len(snapshots) if apply else 0,
+        "failed": len(failures),
+        "snapshots": snapshots,
+        "failures": failures,
+        "artifacts": artifacts,
+        "output_dir": str(run_dir),
+    }
+    report["artifact"] = _write_json(run_dir / "organization_news_report.json", report)
     return report

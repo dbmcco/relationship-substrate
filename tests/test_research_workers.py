@@ -12,6 +12,7 @@ from relationship_substrate.research_workers import (
     organization_enrichment_record_from_research,
     parse_research_json,
     run_organization_enrichment_research,
+    run_organization_news_research,
 )
 
 
@@ -214,6 +215,98 @@ def test_run_organization_enrichment_research_cli_passes_bounds(database_url, mo
     assert cli.main() == 0
     assert captured["database_url"] == database_url
     assert captured["output_dir"] == tmp_path / "org-research"
+    assert captured["limit"] == 3
+    assert captured["apply"] is True
+    assert '"researched": 1' in capsys.readouterr().out
+
+
+def test_run_organization_news_research_stores_snapshots_without_enrichment(database_url, tmp_path):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    domain = f"news-worker-{run_id}.example"
+    _relationship_person(database_url, email=f"person@{domain}")
+    calls: list[dict] = []
+
+    def fake_researcher(company: dict) -> dict:
+        calls.append(company)
+        return {
+            "content": json.dumps(
+                {
+                    "summary": "Recent source-backed news summary for this organization.",
+                    "confidence": "medium",
+                    "sources": [{"id": "source:1", "url": "https://example.com/news"}],
+                }
+            ),
+            "citations": [],
+            "model": "test-news-model",
+        }
+
+    report = run_organization_news_research(
+        database_url,
+        output_dir=tmp_path / "news",
+        limit=100000,
+        apply=True,
+        research_company_news=fake_researcher,
+        skipped_domains=set(),
+        skipped_system_localparts=set(),
+        skipped_system_prefixes=set(),
+    )
+
+    assert report["researched"] >= 1
+    assert any(call["domain"] == domain for call in calls)
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT count(*)::int
+                FROM relationship_substrate.research_snapshot
+                WHERE subject = %s
+                AND subject_type = 'organization_news'
+                """,
+                (domain,),
+            )
+            assert cur.fetchone()[0] >= 1
+            cur.execute(
+                """
+                SELECT metadata->'enrichment'
+                FROM relationship_substrate.organization
+                WHERE domain = %s
+                """,
+                (domain,),
+            )
+            row = cur.fetchone()
+            assert row is None or row[0] is None
+
+
+def test_run_organization_news_research_cli_passes_bounds(database_url, monkeypatch, tmp_path, capsys):
+    from relationship_substrate import cli
+
+    captured: dict[str, object] = {}
+
+    def fake_runner(database_url: str, **kwargs: object) -> dict[str, object]:
+        captured["database_url"] = database_url
+        captured.update(kwargs)
+        return {"ok": True, "researched": 1}
+
+    monkeypatch.setattr(cli, "run_organization_news_research", fake_runner)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "relationship-substrate",
+            "--database-url",
+            database_url,
+            "run-organization-news-research",
+            "--output-dir",
+            str(tmp_path / "org-news"),
+            "--limit",
+            "3",
+            "--apply",
+        ],
+    )
+
+    assert cli.main() == 0
+    assert captured["database_url"] == database_url
+    assert captured["output_dir"] == tmp_path / "org-news"
     assert captured["limit"] == 3
     assert captured["apply"] is True
     assert '"researched": 1' in capsys.readouterr().out

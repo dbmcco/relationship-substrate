@@ -130,7 +130,9 @@ def test_substrate_status_reports_operational_health(database_url):
     assert status["sources"]["msgvault"]["total"] >= 1
     assert status["embeddings"]["people"]["missing"] >= 1
     assert status["tone_state"]["missing_people_count"] >= 1
+    assert status["relationship_strength_state"]["missing_people_count"] >= 1
     assert "relationship_tone_tenor_state" in status["actionable_queues"]
+    assert "relationship_strength_state" in status["actionable_queues"]
 
 
 def test_substrate_status_cli_outputs_health_report(monkeypatch, capsys):

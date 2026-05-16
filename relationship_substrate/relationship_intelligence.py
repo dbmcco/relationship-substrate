@@ -206,6 +206,46 @@ def _tone_tenor_model_contract() -> dict[str, Any]:
     }
 
 
+def _relationship_strength_model_contract() -> dict[str, Any]:
+    return {
+        "owner": "model",
+        "purpose": (
+            "Produce evidence-backed relationship strength proposals only; "
+            "do not mutate persisted state in this stage."
+        ),
+        "required_fields": [
+            "person_email",
+            "state_kind",
+            "summary",
+            "rationale",
+            "evidence_refs",
+            "supersedes_id",
+        ],
+        "code_owns": [
+            "person dossier retrieval",
+            "relationship evidence assembly",
+            "mechanical relationship facts",
+            "prior relationship_state retrieval",
+            "packet schema",
+            "CLI JSON output",
+        ],
+        "model_owns": [
+            "relationship strength interpretation",
+            "confidence interpretation",
+            "age and freshness interpretation",
+            "reciprocity and engagement interpretation",
+            "summary wording",
+            "rationale wording",
+            "supersedes choice",
+        ],
+        "code_must_not": (
+            "No deterministic relationship score, hidden weighting formula, "
+            "or hardcoded semantic interpretation."
+        ),
+        "citation_requirement": "Every proposal must cite supplied evidence refs.",
+    }
+
+
 def prepare_relationship_tone_tenor_analysis_packet(
     database_url: str,
     *,
@@ -249,6 +289,52 @@ def prepare_relationship_tone_tenor_analysis_packet(
         "count": len(people),
         "people": people,
         "model_contract": _tone_tenor_model_contract(),
+    }
+
+
+def prepare_relationship_strength_analysis_packet(
+    database_url: str,
+    *,
+    emails: list[str],
+    evidence_limit: int = 10,
+    prior_state_limit: int = 3,
+) -> dict[str, Any]:
+    people: list[dict[str, Any]] = []
+    for email in emails:
+        normalized_email = email.strip().lower()
+        dossier = get_person_dossier(database_url, email=normalized_email)
+        relationship_intelligence = prepare_relationship_intelligence_packet(
+            database_url,
+            email=normalized_email,
+            evidence_limit=evidence_limit,
+        )
+        prior_states = [
+            state
+            for state in dossier.get("relationship_states", [])
+            if state.get("state_kind") == "relationship_strength"
+        ][:prior_state_limit]
+        people.append(
+            {
+                "email": normalized_email,
+                "person": dossier.get("person"),
+                "relationship_edge": dossier.get("relationship_edge"),
+                "contact_channels": dossier.get("contact_channels", []),
+                "dossier_counts": {
+                    "interactions": len(dossier.get("interactions", [])),
+                    "evidence_refs": len(dossier.get("evidence_refs", [])),
+                    "source_events": len(dossier.get("source_events", [])),
+                    "identity_candidates": len(dossier.get("identity_candidates", [])),
+                    "relationship_states": len(dossier.get("relationship_states", [])),
+                },
+                "relationship_intelligence": relationship_intelligence,
+                "prior_relationship_strength_states": prior_states,
+            }
+        )
+    return {
+        "analysis_stage": "relationship_strength",
+        "count": len(people),
+        "people": people,
+        "model_contract": _relationship_strength_model_contract(),
     }
 
 

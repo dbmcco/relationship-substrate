@@ -13,7 +13,14 @@ inspect, and change them without relying on hidden machine scheduler state.
   It also runs a bounded organization research pass. Default: 25 organizations, apply enabled.
   It runs a bounded local-Ollama tone/tenor pass. Default: 5 people, apply enabled,
   model `hermes3:8b`.
-- `nightly-worklists-loop.sh`: runs `nightly-worklists.sh` repeatedly. Default interval: 24 hours.
+  It runs a bounded local-Ollama relationship-strength pass. Default: 5 people, apply enabled,
+  model `hermes3:8b`.
+  It can run bounded organization-news research snapshots when
+  `RELATIONSHIP_SUBSTRATE_ORGANIZATION_NEWS_LIMIT` is non-zero.
+- `nightly-worklists-loop.sh`: runs `nightly-worklists.sh` repeatedly. Default interval: 12 hours.
+- `catchup-refresh-loop.sh`: runs `nightly-worklists.sh` continuously until organization enrichment,
+  tone/tenor, and relationship-strength queues are clean. Once clean, it sleeps 12 hours between
+  refreshes and enables bounded organization-news research.
 
 ## Inputs
 
@@ -53,4 +60,22 @@ RELATIONSHIP_SUBSTRATE_TONE_TENOR_APPLY=0
 RELATIONSHIP_SUBSTRATE_TONE_TENOR_LIMIT=10
 RELATIONSHIP_SUBSTRATE_TONE_EVIDENCE_LIMIT=8
 RELATIONSHIP_SUBSTRATE_TONE_MODEL=hermes3:8b
+```
+
+Relationship strength can be made dry-run or scaled with:
+
+```bash
+RELATIONSHIP_SUBSTRATE_STRENGTH_APPLY=0
+RELATIONSHIP_SUBSTRATE_STRENGTH_LIMIT=10
+RELATIONSHIP_SUBSTRATE_STRENGTH_EVIDENCE_LIMIT=8
+RELATIONSHIP_SUBSTRATE_STRENGTH_MODEL=hermes3:8b
+```
+
+Catch-up and steady refresh can be tuned with:
+
+```bash
+RELATIONSHIP_SUBSTRATE_CATCHUP_INTERVAL_SECONDS=60
+RELATIONSHIP_SUBSTRATE_REFRESH_INTERVAL_SECONDS=43200
+RELATIONSHIP_SUBSTRATE_STEADY_ORGANIZATION_NEWS_LIMIT=25
+RELATIONSHIP_SUBSTRATE_PERPLEXITY_NEWS_MODEL=sonar-pro
 ```
