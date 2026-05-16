@@ -11,15 +11,18 @@ from typing import Any
 
 import psycopg
 
+from relationship_substrate.contact_hygiene import is_automated_contact_email
 from relationship_substrate.relationship_intelligence import (
     persist_relationship_state,
     prepare_relationship_strength_analysis_packet,
 )
 from relationship_substrate.tone_tenor_workers import (
     DEFAULT_OLLAMA_GENERATE_ENDPOINT,
+    RepairProposal,
     _clean_text,
     _parse_json_object,
     _write_json,
+    ollama_repair_relationship_proposal,
     validate_no_raw_private_leakage,
 )
 
@@ -76,10 +79,11 @@ def missing_relationship_strength_emails(database_url: str, *, limit: int = 25) 
                   p.primary_email
                 LIMIT %s
                 """,
-                (limit,),
+                (max(limit * 5, limit + 100),),
             )
             rows = cur.fetchall()
-    return [row[0] for row in rows]
+    emails = [row[0] for row in rows if not is_automated_contact_email(row[0])]
+    return emails[:limit]
 
 
 def _relationship_strength_prompt(packet: dict[str, Any]) -> str:
@@ -147,10 +151,20 @@ def run_relationship_strength_analysis(
     apply: bool = False,
     model: str | None = None,
     generate_proposal: GenerateProposal | None = None,
+    repair_proposal: RepairProposal | None = None,
 ) -> dict[str, Any]:
-    generate_proposal = generate_proposal or (
-        lambda packet: ollama_generate_relationship_strength(packet, model=model)
-    )
+    using_default_generator = generate_proposal is None
+    generate_proposal = generate_proposal or (lambda packet: ollama_generate_relationship_strength(packet, model=model))
+    if repair_proposal is None and using_default_generator:
+        repair_proposal = (
+            lambda packet, raw_response, error: ollama_repair_relationship_proposal(
+                packet,
+                raw_response,
+                error,
+                state_kind="relationship_strength",
+                model=model,
+            )
+        )
     run_started_at = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = output_dir / run_started_at
     emails = missing_relationship_strength_emails(database_url, limit=limit)
@@ -158,6 +172,7 @@ def run_relationship_strength_analysis(
     proposals: list[dict[str, Any]] = []
     states: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    repaired = 0
     for email in emails:
         try:
             packet = prepare_relationship_strength_analysis_packet(
@@ -168,11 +183,22 @@ def run_relationship_strength_analysis(
             )
             packets.append(packet)
             response = generate_proposal(packet)
-            proposal = parse_relationship_strength_proposal(response)
-            validate_no_raw_private_leakage(proposal, packet)
+            try:
+                proposal = parse_relationship_strength_proposal(response)
+                validate_no_raw_private_leakage(proposal, packet)
+                state = persist_relationship_state(database_url, email=email, proposal=proposal) if apply else None
+            except Exception as exc:
+                if repair_proposal is None:
+                    raise
+                repair_response = repair_proposal(packet, response, str(exc))
+                proposal = parse_relationship_strength_proposal(repair_response)
+                validate_no_raw_private_leakage(proposal, packet)
+                state = persist_relationship_state(database_url, email=email, proposal=proposal) if apply else None
+                response = repair_response
+                repaired += 1
             proposals.append({"email": email, "proposal": proposal, "raw_response": response})
-            if apply:
-                states.append(persist_relationship_state(database_url, email=email, proposal=proposal))
+            if state is not None:
+                states.append(state)
         except Exception as exc:  # noqa: BLE001 - per-person failures are reportable work output.
             failures.append({"email": email, "error": str(exc)})
     artifacts = {
@@ -192,6 +218,7 @@ def run_relationship_strength_analysis(
         "proposed": len(proposals),
         "applied": len(states),
         "failed": len(failures),
+        "repaired": repaired,
         "failures": failures,
         "artifacts": artifacts,
         "output_dir": str(run_dir),

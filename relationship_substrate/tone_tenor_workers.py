@@ -11,6 +11,7 @@ from typing import Any
 
 import psycopg
 
+from relationship_substrate.contact_hygiene import is_automated_contact_email
 from relationship_substrate.relationship_intelligence import (
     persist_relationship_state,
     prepare_relationship_tone_tenor_analysis_packet,
@@ -21,6 +22,7 @@ DEFAULT_TONE_TENOR_MODEL = "hermes3:8b"
 DEFAULT_OLLAMA_GENERATE_ENDPOINT = "http://localhost:11434/api/generate"
 
 GenerateProposal = Callable[[dict[str, Any]], str]
+RepairProposal = Callable[[dict[str, Any], str, str], str]
 
 
 def _clean_text(value: object) -> str:
@@ -137,10 +139,11 @@ def missing_tone_tenor_emails(database_url: str, *, limit: int = 25) -> list[str
                   p.primary_email
                 LIMIT %s
                 """,
-                (limit,),
+                (max(limit * 5, limit + 100),),
             )
             rows = cur.fetchall()
-    return [row[0] for row in rows]
+    emails = [row[0] for row in rows if not is_automated_contact_email(row[0])]
+    return emails[:limit]
 
 
 def _tone_tenor_prompt(packet: dict[str, Any]) -> str:
@@ -153,6 +156,70 @@ def _tone_tenor_prompt(packet: dict[str, Any]) -> str:
         "Do not recommend actions; only describe tone/tenor grounded in evidence.\n\n"
         f"{json.dumps(packet, indent=2, sort_keys=True, default=str)}"
     )
+
+
+def _repair_prompt(
+    *,
+    state_kind: str,
+    packet: dict[str, Any],
+    raw_response: str,
+    error: str,
+) -> str:
+    return (
+        "Repair a model proposal for a private relationship intelligence system.\n"
+        "Return JSON only with keys: summary, rationale, evidence_refs, supersedes_id.\n"
+        f"Use state_kind {state_kind} implicitly; do not include extra keys.\n"
+        "Every evidence_refs entry must be an object like {\"id\":\"supplied-evidence-id\"} "
+        "and must cite only an id from supplied evidence.\n"
+        "Do not quote raw message snippets, email addresses, URLs, or phone numbers.\n"
+        "Do not invent evidence. Do not recommend actions.\n\n"
+        f"Validation error:\n{error}\n\n"
+        f"Invalid proposal:\n{raw_response}\n\n"
+        f"Original evidence packet:\n{json.dumps(packet, indent=2, sort_keys=True, default=str)}"
+    )
+
+
+def ollama_repair_relationship_proposal(
+    packet: dict[str, Any],
+    raw_response: str,
+    error: str,
+    *,
+    state_kind: str,
+    model: str | None = None,
+    endpoint: str | None = None,
+    timeout_seconds: int = 180,
+) -> str:
+    model = model or os.environ.get("RELATIONSHIP_SUBSTRATE_TONE_MODEL", DEFAULT_TONE_TENOR_MODEL)
+    endpoint = endpoint or os.environ.get("RELATIONSHIP_SUBSTRATE_OLLAMA_GENERATE_ENDPOINT", DEFAULT_OLLAMA_GENERATE_ENDPOINT)
+    payload = json.dumps(
+        {
+            "model": model,
+            "prompt": _repair_prompt(
+                state_kind=state_kind,
+                packet=packet,
+                raw_response=raw_response,
+                error=error,
+            ),
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.1},
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read()
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Ollama relationship proposal repair failed: {exc}") from exc
+    data = json.loads(raw)
+    if data.get("error"):
+        raise RuntimeError(f"Ollama relationship proposal repair failed: {data['error']}")
+    return _clean_text(data.get("response"))
 
 
 def ollama_generate_tone_tenor(
@@ -200,10 +267,20 @@ def run_relationship_tone_tenor_analysis(
     apply: bool = False,
     model: str | None = None,
     generate_proposal: GenerateProposal | None = None,
+    repair_proposal: RepairProposal | None = None,
 ) -> dict[str, Any]:
-    generate_proposal = generate_proposal or (
-        lambda packet: ollama_generate_tone_tenor(packet, model=model)
-    )
+    using_default_generator = generate_proposal is None
+    generate_proposal = generate_proposal or (lambda packet: ollama_generate_tone_tenor(packet, model=model))
+    if repair_proposal is None and using_default_generator:
+        repair_proposal = (
+            lambda packet, raw_response, error: ollama_repair_relationship_proposal(
+                packet,
+                raw_response,
+                error,
+                state_kind="relationship_tone_tenor",
+                model=model,
+            )
+        )
     run_started_at = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = output_dir / run_started_at
     emails = missing_tone_tenor_emails(database_url, limit=limit)
@@ -211,6 +288,7 @@ def run_relationship_tone_tenor_analysis(
     proposals: list[dict[str, Any]] = []
     states: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    repaired = 0
     for email in emails:
         try:
             packet = prepare_relationship_tone_tenor_analysis_packet(
@@ -221,11 +299,22 @@ def run_relationship_tone_tenor_analysis(
             )
             packets.append(packet)
             response = generate_proposal(packet)
-            proposal = parse_tone_tenor_proposal(response)
-            validate_no_raw_private_leakage(proposal, packet)
+            try:
+                proposal = parse_tone_tenor_proposal(response)
+                validate_no_raw_private_leakage(proposal, packet)
+                state = persist_relationship_state(database_url, email=email, proposal=proposal) if apply else None
+            except Exception as exc:
+                if repair_proposal is None:
+                    raise
+                repair_response = repair_proposal(packet, response, str(exc))
+                proposal = parse_tone_tenor_proposal(repair_response)
+                validate_no_raw_private_leakage(proposal, packet)
+                state = persist_relationship_state(database_url, email=email, proposal=proposal) if apply else None
+                response = repair_response
+                repaired += 1
             proposals.append({"email": email, "proposal": proposal, "raw_response": response})
-            if apply:
-                states.append(persist_relationship_state(database_url, email=email, proposal=proposal))
+            if state is not None:
+                states.append(state)
         except Exception as exc:  # noqa: BLE001 - per-person failures are reportable work output.
             failures.append({"email": email, "error": str(exc)})
     artifacts = {
@@ -244,6 +333,7 @@ def run_relationship_tone_tenor_analysis(
         "proposed": len(proposals),
         "applied": len(states),
         "failed": len(failures),
+        "repaired": repaired,
         "failures": failures,
         "artifacts": artifacts,
         "output_dir": str(run_dir),

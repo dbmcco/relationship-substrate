@@ -65,6 +65,26 @@ def test_missing_tone_tenor_emails_returns_people_with_interactions(database_url
     assert email in emails
 
 
+def test_missing_tone_tenor_emails_skips_automated_contacts(database_url):
+    run_migrations(database_url)
+    human_email = f"human-tone-{uuid4().hex}@example.com"
+    automated_emails = [
+        "invitations@linkedin.com",
+        f"drive-shares-noreply-{uuid4().hex}@google.com",
+        f"p2p-helpdesk.noreply-{uuid4().hex}@novartis.com",
+        f"email@emails-{uuid4().hex}.example.com",
+    ]
+    _insert_correspondence_evidence(database_url, email=human_email)
+    for automated_email in automated_emails:
+        _insert_correspondence_evidence(database_url, email=automated_email)
+    materialize_msgvault_correspondence(database_url)
+
+    emails = missing_tone_tenor_emails(database_url, limit=100000)
+
+    assert human_email in emails
+    assert not set(automated_emails) & set(emails)
+
+
 def test_parse_tone_tenor_proposal_extracts_fenced_json():
     proposal = parse_tone_tenor_proposal(
         """
@@ -145,6 +165,46 @@ def test_run_relationship_tone_tenor_analysis_persists_valid_model_proposals(dat
             assert row[0] == "Warm, responsive, and professionally direct."
             assert "supplied follow-up evidence" in row[1]
             assert row[2] == [{"id": evidence_ref_id}]
+
+
+def test_run_relationship_tone_tenor_analysis_repairs_invalid_model_proposals(database_url, tmp_path):
+    run_migrations(database_url)
+    email = f"tone-repair-{uuid4().hex}@example.com"
+    evidence_ref_id = _insert_correspondence_evidence(database_url, email=email)
+    materialize_msgvault_correspondence(database_url)
+    repair_calls: list[dict] = []
+
+    def bad_model(packet: dict) -> str:
+        return json.dumps(
+            {
+                "summary": "Warm and active.",
+                "rationale": "Missing evidence refs should trigger repair.",
+                "evidence_refs": [],
+            }
+        )
+
+    def repair_model(packet: dict, raw_response: str, error: str) -> str:
+        repair_calls.append({"packet": packet, "raw_response": raw_response, "error": error})
+        return json.dumps(
+            {
+                "summary": "Warm and active.",
+                "rationale": "The repaired proposal cites supplied evidence.",
+                "evidence_refs": [{"id": evidence_ref_id}],
+            }
+        )
+
+    report = run_relationship_tone_tenor_analysis(
+        database_url,
+        output_dir=tmp_path / "tone",
+        limit=100000,
+        apply=True,
+        generate_proposal=bad_model,
+        repair_proposal=repair_model,
+    )
+
+    assert report["applied"] >= 1
+    assert repair_calls
+    assert "requires evidence_refs" in repair_calls[0]["error"]
 
 
 def test_validate_no_raw_private_leakage_rejects_exact_snippets():
