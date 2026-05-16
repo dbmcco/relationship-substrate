@@ -74,6 +74,7 @@ from relationship_substrate.repositories import (
     upsert_source_event,
 )
 from relationship_substrate.search import DEFAULT_ROLE_KEYWORDS, search_history_backed_people, search_people
+from relationship_substrate.tone_tenor_workers import run_relationship_tone_tenor_analysis
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -127,6 +128,13 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_tone_analysis.add_argument("--email", action="append", required=True)
     prepare_tone_analysis.add_argument("--evidence-limit", type=int, default=10)
     prepare_tone_analysis.add_argument("--prior-state-limit", type=int, default=3)
+    run_tone_analysis = subparsers.add_parser("run-relationship-tone-analysis")
+    run_tone_analysis.add_argument("--output-dir", default="output/tone-tenor")
+    run_tone_analysis.add_argument("--limit", type=int, default=10)
+    run_tone_analysis.add_argument("--evidence-limit", type=int, default=8)
+    run_tone_analysis.add_argument("--prior-state-limit", type=int, default=3)
+    run_tone_analysis.add_argument("--model", default=None)
+    run_tone_analysis.add_argument("--apply", action="store_true")
     prepare_outreach = subparsers.add_parser("prepare-outreach-proposal")
     prepare_outreach.add_argument("--email", action="append", required=True)
     prepare_outreach.add_argument("--research-context", default=None)
@@ -733,6 +741,20 @@ def main() -> int:
                 emails=args.email,
                 evidence_limit=args.evidence_limit,
                 prior_state_limit=args.prior_state_limit,
+            )
+        )
+        return 0
+    if args.command == "run-relationship-tone-analysis":
+        run_migrations(settings.database_url)
+        _print_json(
+            run_relationship_tone_tenor_analysis(
+                settings.database_url,
+                output_dir=Path(args.output_dir),
+                limit=args.limit,
+                evidence_limit=args.evidence_limit,
+                prior_state_limit=args.prior_state_limit,
+                apply=args.apply,
+                model=args.model,
             )
         )
         return 0

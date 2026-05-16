@@ -10,7 +10,9 @@ inspect, and change them without relying on hidden machine scheduler state.
   current North Star tone-state worklist.
 - `substrate-loop.sh`: runs `substrate-cycle.sh` repeatedly. Default interval: 6 hours.
 - `nightly-worklists.sh`: exports the current enrichment and tone worklists without mutating ingest.
-  It also runs a bounded organization research pass. Default: 5 organizations, apply enabled.
+  It also runs a bounded organization research pass. Default: 25 organizations, apply enabled.
+  It runs a bounded local-Ollama tone/tenor pass. Default: 5 people, apply enabled,
+  model `hermes3:8b`.
 - `nightly-worklists-loop.sh`: runs `nightly-worklists.sh` repeatedly. Default interval: 24 hours.
 
 ## Inputs
@@ -42,4 +44,13 @@ bounded by `RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_LIMIT` and can be made 
 
 ```bash
 RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_APPLY=0
+```
+
+Tone/tenor can be made dry-run or scaled with:
+
+```bash
+RELATIONSHIP_SUBSTRATE_TONE_TENOR_APPLY=0
+RELATIONSHIP_SUBSTRATE_TONE_TENOR_LIMIT=10
+RELATIONSHIP_SUBSTRATE_TONE_EVIDENCE_LIMIT=8
+RELATIONSHIP_SUBSTRATE_TONE_MODEL=hermes3:8b
 ```
