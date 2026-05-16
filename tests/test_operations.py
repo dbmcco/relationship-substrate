@@ -11,6 +11,7 @@ from relationship_substrate.db import run_migrations
 from relationship_substrate.materialize import materialize_msgvault_correspondence
 from relationship_substrate.network_ask import prepare_ask_network_packet
 from relationship_substrate.operations import (
+    clean_set_progress,
     evaluate_non_ui_workflow,
     run_autonomous_backfill,
     select_correspondence_seed_emails,
@@ -161,6 +162,80 @@ def test_substrate_status_cli_outputs_health_report(monkeypatch, capsys):
 
     assert cli.main() == 0
     assert '"relationship_substrate_status"' in capsys.readouterr().out
+
+
+def test_clean_set_progress_summarizes_queues_and_recent_passes(tmp_path):
+    report_dir = tmp_path / "nightly" / "20260516T120000Z"
+    report_dir.mkdir(parents=True)
+    (tmp_path / "nightly" / "latest").write_text(str(report_dir), encoding="utf-8")
+    (report_dir / "organization_research_stdout.json").write_text(
+        json.dumps({"ok": True, "worklist_count": 25, "researched": 25, "applied": 25, "failed": 0}),
+        encoding="utf-8",
+    )
+    (report_dir / "tone_tenor_stdout.json").write_text(
+        json.dumps({"ok": True, "selected": 20, "proposed": 20, "applied": 20, "failed": 0}),
+        encoding="utf-8",
+    )
+    (report_dir / "relationship_strength_stdout.json").write_text(
+        json.dumps({"ok": True, "selected": 20, "proposed": 20, "applied": 20, "failed": 0}),
+        encoding="utf-8",
+    )
+    status = {
+        "actionable_queues": {
+            "organization_enrichment": {"count": 50},
+            "relationship_tone_tenor_state": {"count": 40},
+            "relationship_strength_state": {"count": 60},
+        }
+    }
+
+    progress = clean_set_progress(status, nightly_dir=tmp_path / "nightly", steady_refresh_interval_seconds=43200)
+
+    assert progress["progress_stage"] == "relationship_substrate_clean_set_progress"
+    assert progress["clean_set_ready"] is False
+    assert progress["remaining"] == {
+        "organization_enrichment": 50,
+        "relationship_tone_tenor_state": 40,
+        "relationship_strength_state": 60,
+    }
+    assert progress["latest_pass"]["organization_enrichment"]["applied"] == 25
+    assert progress["latest_pass"]["relationship_tone_tenor_state"]["applied"] == 20
+    assert progress["latest_pass"]["relationship_strength_state"]["applied"] == 20
+    assert progress["estimated_passes_remaining"] == 3
+    assert progress["steady_refresh"]["interval_seconds"] == 43200
+
+
+def test_clean_set_progress_cli_outputs_report(monkeypatch, capsys):
+    from relationship_substrate import cli
+
+    monkeypatch.setattr(cli, "run_migrations", lambda database_url: None)
+    monkeypatch.setattr(
+        cli,
+        "substrate_status",
+        lambda database_url, **kwargs: {"actionable_queues": {}},
+    )
+    monkeypatch.setattr(
+        cli,
+        "clean_set_progress",
+        lambda status, **kwargs: {
+            "progress_stage": "relationship_substrate_clean_set_progress",
+            "clean_set_ready": True,
+        },
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "relationship-substrate",
+            "--database-url",
+            "postgresql://localhost:5432/relationship_substrate_ops_test",
+            "clean-set-progress",
+            "--nightly-dir",
+            "output/nightly",
+        ],
+    )
+
+    assert cli.main() == 0
+    assert '"relationship_substrate_clean_set_progress"' in capsys.readouterr().out
 
 
 def test_evaluate_non_ui_workflow_validates_packet_recommendations_persistence_and_feedback(

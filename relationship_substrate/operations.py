@@ -467,6 +467,87 @@ def substrate_status(
     }
 
 
+def _read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _latest_nightly_report_dir(nightly_dir: Path) -> Path | None:
+    latest_file = nightly_dir / "latest"
+    if latest_file.exists():
+        latest_value = latest_file.read_text(encoding="utf-8").strip()
+        if latest_value:
+            return Path(latest_value)
+    report_dirs = sorted(path for path in nightly_dir.glob("20*") if path.is_dir())
+    return report_dirs[-1] if report_dirs else None
+
+
+def _applied_or_processed(report: dict[str, Any], *, selected_key: str) -> int:
+    for key in ("applied", "researched", "proposed", selected_key, "worklist_count"):
+        value = report.get(key)
+        if isinstance(value, int):
+            return max(value, 0)
+    return 0
+
+
+def clean_set_progress(
+    status: dict[str, Any],
+    *,
+    nightly_dir: Path = Path("output/nightly"),
+    steady_refresh_interval_seconds: int = 43200,
+) -> dict[str, Any]:
+    queues = status.get("actionable_queues") or {}
+    remaining = {
+        "organization_enrichment": int((queues.get("organization_enrichment") or {}).get("count") or 0),
+        "relationship_tone_tenor_state": int(
+            (queues.get("relationship_tone_tenor_state") or {}).get("count") or 0
+        ),
+        "relationship_strength_state": int((queues.get("relationship_strength_state") or {}).get("count") or 0),
+    }
+    latest_dir = _latest_nightly_report_dir(nightly_dir)
+    latest_pass: dict[str, Any] = {}
+    throughput: dict[str, int] = {}
+    if latest_dir is not None:
+        report_specs = {
+            "organization_enrichment": ("organization_research_stdout.json", "worklist_count"),
+            "relationship_tone_tenor_state": ("tone_tenor_stdout.json", "selected"),
+            "relationship_strength_state": ("relationship_strength_stdout.json", "selected"),
+            "organization_news": ("organization_news_stdout.json", "worklist_count"),
+        }
+        for key, (filename, selected_key) in report_specs.items():
+            report = _read_json_file(latest_dir / filename)
+            latest_pass[key] = report
+            throughput[key] = _applied_or_processed(report, selected_key=selected_key)
+    estimated_passes = 0
+    for key, count in remaining.items():
+        processed = throughput.get(key, 0)
+        if count > 0 and processed <= 0:
+            estimated_passes = None
+            break
+        if count > 0:
+            estimated_passes = max(estimated_passes, (count + processed - 1) // processed)
+    clean_set_ready = all(count == 0 for count in remaining.values())
+    return {
+        "progress_stage": "relationship_substrate_clean_set_progress",
+        "clean_set_ready": clean_set_ready,
+        "remaining": remaining,
+        "latest_report_dir": str(latest_dir) if latest_dir is not None else None,
+        "latest_pass": latest_pass,
+        "throughput_last_pass": throughput,
+        "estimated_passes_remaining": estimated_passes,
+        "steady_refresh": {
+            "ready": clean_set_ready,
+            "interval_seconds": steady_refresh_interval_seconds,
+            "mode": "organization_news_search",
+        },
+    }
+
+
 def _check(check_id: str, passed: bool, detail: str) -> dict[str, object]:
     return {"id": check_id, "passed": bool(passed), "detail": detail}
 

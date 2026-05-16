@@ -49,6 +49,7 @@ from relationship_substrate.organizations import (
 )
 from relationship_substrate.operations import (
     DEFAULT_NORTH_STAR_SEMANTIC_QUERY,
+    clean_set_progress,
     evaluate_non_ui_workflow,
     run_autonomous_backfill,
     run_network_pipeline,
@@ -287,6 +288,10 @@ def build_parser() -> argparse.ArgumentParser:
     list_feedback.add_argument("--limit", type=int, default=50)
     status = subparsers.add_parser("substrate-status")
     status.add_argument("--organization-worklist-limit", type=int, default=100)
+    clean_progress = subparsers.add_parser("clean-set-progress")
+    clean_progress.add_argument("--nightly-dir", default="output/nightly")
+    clean_progress.add_argument("--organization-worklist-limit", type=int, default=250)
+    clean_progress.add_argument("--steady-refresh-interval-seconds", type=int, default=43200)
     non_ui_eval = subparsers.add_parser("eval-non-ui-workflow")
     non_ui_eval.add_argument("--ask-packet", required=True)
     non_ui_eval.add_argument("--model-proposal", required=True)
@@ -1217,6 +1222,23 @@ def main() -> int:
                 skipped_domains=set(settings.skipped_sender_domains),
                 skipped_system_localparts=set(settings.skipped_system_localparts),
                 skipped_system_prefixes=set(settings.skipped_system_prefixes),
+            )
+        )
+        return 0
+    if args.command == "clean-set-progress":
+        run_migrations(settings.database_url)
+        status_report = substrate_status(
+            settings.database_url,
+            organization_worklist_limit=args.organization_worklist_limit,
+            skipped_domains=set(settings.skipped_sender_domains),
+            skipped_system_localparts=set(settings.skipped_system_localparts),
+            skipped_system_prefixes=set(settings.skipped_system_prefixes),
+        )
+        _print_json(
+            clean_set_progress(
+                status_report,
+                nightly_dir=Path(args.nightly_dir),
+                steady_refresh_interval_seconds=args.steady_refresh_interval_seconds,
             )
         )
         return 0
