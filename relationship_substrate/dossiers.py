@@ -254,8 +254,9 @@ def get_person_dossier(database_url: str, *, email: str) -> dict[str, Any]:
             cur.execute(
                 """
                 SELECT id, note_kind, applies_to, note, source, metadata, created_at
-                FROM relationship_substrate.person_note
-                WHERE person_id = %s
+                FROM relationship_substrate.subject_note
+                WHERE subject_type = 'person'
+                  AND subject_id = %s
                 ORDER BY created_at DESC, id DESC
                 LIMIT 50
                 """,

@@ -179,9 +179,11 @@ It must preserve:
 - first and last interaction dates
 - mechanical freshness
 - organization enrichment fields
+- `subject_note_context` for source-owned correction notes
 - provenance fields
 
 Actual organization size must come from organization enrichment, not known-people counts.
+Subject note context can demote or explain a candidate for a requested context, but must not hide matching records or become canonical profile facts without governed promotion.
 
 ### relationship_intelligence
 

@@ -1,0 +1,169 @@
+{
+  "records": {
+    "person": {
+      "record_kind": "person",
+      "id": "person_ada_lovelace",
+      "display_name": "Ada Lovelace",
+      "primary_email": "ada@example.test",
+      "source_posture": "direct_interaction",
+      "provenance_status": "fixture",
+      "evidence_refs": ["fixture:message:ada-001"],
+      "metadata": {}
+    },
+    "organization": {
+      "record_kind": "organization",
+      "id": "org_analytical_engines",
+      "name": "Analytical Engines Cooperative",
+      "domain": "analytical.example.test",
+      "source_posture": "enrichment",
+      "provenance_status": "fixture",
+      "evidence_refs": ["fixture:url:analytical-engines"],
+      "metadata": {
+        "company_type": "technical_advisory"
+      }
+    },
+    "affiliation": {
+      "record_kind": "affiliation",
+      "id": "affiliation_ada_analytical",
+      "person_id": "person_ada_lovelace",
+      "organization_id": "org_analytical_engines",
+      "role_or_title": "Advisor",
+      "source_posture": "curated_export",
+      "provenance_status": "fixture",
+      "evidence_refs": ["fixture:curated-export:row-1"],
+      "metadata": {}
+    },
+    "interaction": {
+      "record_kind": "interaction",
+      "id": "interaction_ada_001",
+      "person_id": "person_ada_lovelace",
+      "interaction_type": "message",
+      "occurred_at": "2026-05-01T12:00:00Z",
+      "subject": "Follow-up on analytical notes",
+      "evidence_refs": ["fixture:message:ada-001"],
+      "metadata": {}
+    },
+    "subject_note": {
+      "record_kind": "subject_note",
+      "id": "subject_note_ada_context",
+      "subject_type": "person",
+      "subject_id": "person_ada_lovelace",
+      "note_kind": "context_fit",
+      "applies_to": "analytical_engine_research",
+      "note": "Use this contact for technical context, not as an outreach target.",
+      "source": "fixture_correction",
+      "source_ref": "fixture:review:subject-note-001",
+      "evidence_refs": ["fixture:message:ada-001"],
+      "metadata": {
+        "author": "fixture"
+      },
+      "supersedes_id": null,
+      "created_at": "2026-05-02T12:00:00Z"
+    }
+  },
+  "record_subject_note": {
+    "input": {
+      "subject_type": "person",
+      "subject_ref": "ada@example.test",
+      "note_kind": "context_fit",
+      "applies_to": "analytical_engine_research",
+      "note": "Use this contact for technical context, not as an outreach target.",
+      "source": "fixture_correction",
+      "source_ref": "fixture:review:subject-note-001",
+      "evidence_refs": ["fixture:message:ada-001"],
+      "metadata": {
+        "author": "fixture"
+      }
+    },
+    "effect_type": "source_owned_correction_write",
+    "requires_external_action_approval": false,
+    "audit_policy": "Record subject, note_kind, applies_to, evidence refs, author/source, and supersession when available."
+  },
+  "list_subject_notes": {
+    "input": {
+      "subject_type": "person",
+      "subject_ref": "ada@example.test",
+      "note_kind": "context_fit",
+      "limit": 50
+    },
+    "output": {
+      "count": 1,
+      "subject_note_context": [
+        {
+          "record_kind": "subject_note",
+          "id": "subject_note_ada_context",
+          "subject_type": "person",
+          "subject_id": "person_ada_lovelace",
+          "note_kind": "context_fit",
+          "applies_to": "analytical_engine_research",
+          "note": "Use this contact for technical context, not as an outreach target.",
+          "source": "fixture_correction",
+          "source_ref": "fixture:review:subject-note-001",
+          "evidence_refs": ["fixture:message:ada-001"],
+          "metadata": {
+            "author": "fixture"
+          },
+          "supersedes_id": null,
+          "created_at": "2026-05-02T12:00:00Z"
+        }
+      ]
+    }
+  },
+  "tool_actions": [
+    {
+      "id": "tool_action.relationship_substrate.operating_picture",
+      "tool_ref": "tool.relationship_substrate.operating_picture",
+      "operation": "read",
+      "effect_type": "read_only",
+      "backing_tool_refs": ["tool.relationship_substrate.operating_picture"],
+      "required_fields": ["source_ref"],
+      "optional_fields": ["limit", "include_subject_notes", "subject_note_context"],
+      "answer_contract_policy": ["subject_note_context_demote_explain_not_hide"],
+      "requires_external_action_approval": false
+    },
+    {
+      "id": "tool_action.relationship_substrate.list_subject_notes",
+      "tool_ref": "tool.relationship_substrate.list_subject_notes",
+      "operation": "read",
+      "effect_type": "read_only",
+      "backing_tool_refs": ["tool.relationship_substrate.list_subject_notes"],
+      "required_fields": ["subject_type"],
+      "optional_fields": ["subject", "note_kind", "limit", "subject_note_context"],
+      "answer_contract_policy": ["subject_note_context_demote_explain_not_hide"],
+      "requires_external_action_approval": false
+    },
+    {
+      "id": "tool_action.relationship_substrate.search_small_consulting_firm_contacts",
+      "tool_ref": "tool.relationship_substrate.search_small_consulting_firm_contacts",
+      "operation": "search",
+      "effect_type": "read_only",
+      "backing_tool_refs": ["tool.relationship_substrate.search_history_backed_people"],
+      "required_fields": ["query"],
+      "optional_fields": ["actual_employee_count", "consultant_count", "organization_type", "limit", "subject_note_context"],
+      "answer_contract_policy": ["subject_note_context_demote_explain_not_hide"],
+      "requires_external_action_approval": false
+    },
+    {
+      "id": "tool_action.relationship_substrate.search_history_backed_people",
+      "tool_ref": "tool.relationship_substrate.search_history_backed_people",
+      "operation": "search",
+      "effect_type": "read_only",
+      "backing_tool_refs": ["tool.relationship_substrate.search_history_backed_people"],
+      "required_fields": ["query"],
+      "optional_fields": ["actual_employee_count", "consultant_count", "organization_type", "limit", "subject_note_context"],
+      "answer_contract_policy": ["subject_note_context_demote_explain_not_hide"],
+      "requires_external_action_approval": false
+    },
+    {
+      "id": "tool_action.relationship_substrate.record_subject_note",
+      "tool_ref": "tool.relationship_substrate.record_subject_note",
+      "operation": "record",
+      "effect_type": "source_owned_correction_write",
+      "backing_tool_refs": ["relationship-substrate record-subject-note"],
+      "required_fields": ["subject_type", "subject", "note_kind", "note"],
+      "optional_fields": ["applies_to", "source", "source_ref", "evidence_refs", "metadata", "supersedes_id", "subject_note_context"],
+      "answer_contract_policy": ["subject_note_context_demote_explain_not_hide"],
+      "requires_external_action_approval": false
+    }
+  ]
+}

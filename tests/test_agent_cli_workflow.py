@@ -482,6 +482,57 @@ def test_agent_cli_records_and_lists_person_notes(database_url, monkeypatch, cap
     assert listed["notes"][0]["note_kind"] == "context_fit"
 
 
+def test_agent_cli_records_and_lists_subject_notes(database_url, monkeypatch, capsys):
+    run_migrations(database_url)
+    email = f"cli-subject-note-{uuid4().hex}@example.com"
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.person (
+                  display_name, primary_email, source_posture, provenance_status
+                )
+                VALUES ('CLI Subject Note', %s, 'direct_interaction', 'test')
+                """,
+                (email,),
+            )
+        conn.commit()
+
+    recorded = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "record-subject-note",
+        "--subject-type",
+        "person",
+        "--subject",
+        email,
+        "--kind",
+        "context_fit",
+        "--applies-to",
+        "small_consulting_firm_discovery",
+        "--note",
+        "This source-owned correction should be contextual evidence.",
+    )
+    listed = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "list-subject-notes",
+        "--subject-type",
+        "person",
+        "--subject",
+        email,
+    )
+
+    assert recorded["person_email"] == email
+    assert listed["count"] == 1
+    assert listed["subject_note_context"][0]["note_kind"] == "context_fit"
+    assert listed["notes"] == listed["subject_note_context"]
+
+
 def test_agent_cli_searches_people_by_role_and_company_size(
     database_url, tmp_path, monkeypatch, capsys
 ):

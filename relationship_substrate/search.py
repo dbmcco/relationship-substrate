@@ -128,7 +128,7 @@ def _person_notes_by_id(
         """
         WITH ranked_notes AS (
           SELECT
-            person_id,
+            subject_id AS person_id,
             id,
             note_kind,
             applies_to,
@@ -137,11 +137,12 @@ def _person_notes_by_id(
             metadata,
             created_at,
             row_number() OVER (
-              PARTITION BY person_id
+              PARTITION BY subject_id
               ORDER BY created_at DESC, id DESC
             ) AS note_rank
-          FROM relationship_substrate.person_note
-          WHERE person_id = ANY(%s)
+          FROM relationship_substrate.subject_note
+          WHERE subject_type = 'person'
+            AND subject_id = ANY(%s)
         )
         SELECT person_id, id, note_kind, applies_to, note, source, metadata, created_at
         FROM ranked_notes
@@ -461,6 +462,7 @@ def search_history_backed_people(
         last_interaction_at = row[5].isoformat() if row[5] else None
         semantic_distance = row[9]
         semantic_similarity = 1.0 - float(semantic_distance) if semantic_distance is not None else None
+        person_notes = notes_by_person_id.get(str(row[0]), [])
         results.append(
             {
                 "person_id": str(row[0]),
@@ -486,7 +488,9 @@ def search_history_backed_people(
                     f"actual_employee_count:{enrichment.get('employee_count_min')}-{enrichment.get('employee_count_max')}",
                     f"consultant_count_estimate:{enrichment.get('consultant_count_estimate')}",
                 ],
-                "person_notes": notes_by_person_id.get(str(row[0]), []),
+                "subject_note_context": person_notes,
+                "person_notes": person_notes,
+                "subject_notes": person_notes,
             }
         )
         seen_emails.add(email)

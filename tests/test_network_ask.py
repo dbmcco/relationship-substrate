@@ -108,12 +108,12 @@ def test_ask_network_cli_returns_contract_packet_without_model_judgment(
     assert packet["query"]["search_mode"] == "history_backed"
     assert packet["query"]["constraints"]["actual_employee_count_min"] == 8
     assert packet["query"]["constraints"]["actual_employee_count_max"] == 15
-    assert packet["readiness"]["ready_for_model_ranking"] is True
     assert packet["readiness"]["ready_for_outreach_drafting"] is False
     assert "research_context" in packet["readiness"]["missing"]
     assert packet["count"] >= 1
 
     person_packet = next(person for person in packet["people"] if person["email"] == email)
+    assert person_packet["packet_readiness"]["ready_for_model_ranking"] is True
     assert person_packet["search_hit"]["domain"] == domain
     assert person_packet["relationship_intelligence"]["evidence"][0]["id"] == evidence_ref_id
     assert person_packet["evidence_summary"]["has_direct_relationship_evidence"] is True

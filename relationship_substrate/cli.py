@@ -47,7 +47,12 @@ from relationship_substrate.organizations import (
     organization_enrichment_worklist,
     upsert_organization_enrichment,
 )
-from relationship_substrate.person_notes import list_person_notes, record_person_note
+from relationship_substrate.subject_notes import (
+    list_person_notes,
+    list_subject_notes,
+    record_person_note,
+    record_subject_note,
+)
 from relationship_substrate.operations import (
     DEFAULT_NORTH_STAR_SEMANTIC_QUERY,
     clean_set_progress,
@@ -295,6 +300,22 @@ def build_parser() -> argparse.ArgumentParser:
     list_feedback.add_argument("--packet-id", default=None)
     list_feedback.add_argument("--person-email", default=None)
     list_feedback.add_argument("--limit", type=int, default=50)
+    record_subject_note_parser = subparsers.add_parser("record-subject-note")
+    record_subject_note_parser.add_argument("--subject-type", required=True)
+    record_subject_note_parser.add_argument("--subject", required=True)
+    record_subject_note_parser.add_argument("--kind", required=True)
+    record_subject_note_parser.add_argument("--note", required=True)
+    record_subject_note_parser.add_argument("--applies-to", default=None)
+    record_subject_note_parser.add_argument("--source", default="user_correction")
+    record_subject_note_parser.add_argument("--source-ref", default=None)
+    record_subject_note_parser.add_argument("--evidence-ref", action="append", default=[])
+    record_subject_note_parser.add_argument("--metadata", default=None)
+    record_subject_note_parser.add_argument("--supersedes-id", default=None)
+    list_subject_notes_parser = subparsers.add_parser("list-subject-notes")
+    list_subject_notes_parser.add_argument("--subject-type", default=None)
+    list_subject_notes_parser.add_argument("--subject", default=None)
+    list_subject_notes_parser.add_argument("--kind", default=None)
+    list_subject_notes_parser.add_argument("--limit", type=int, default=50)
     record_person_note_parser = subparsers.add_parser("record-person-note")
     record_person_note_parser.add_argument("--person", required=True)
     record_person_note_parser.add_argument("--kind", required=True)
@@ -1178,6 +1199,36 @@ def main() -> int:
             limit=args.limit,
         )
         _print_json({"count": len(rows), "feedback": rows})
+        return 0
+    if args.command == "record-subject-note":
+        run_migrations(settings.database_url)
+        metadata = json.loads(args.metadata) if args.metadata else {}
+        _print_json(
+            record_subject_note(
+                settings.database_url,
+                subject_type=args.subject_type,
+                subject_ref=args.subject,
+                note_kind=args.kind,
+                applies_to=args.applies_to,
+                note=args.note,
+                source=args.source,
+                source_ref=args.source_ref,
+                evidence_refs=args.evidence_ref,
+                metadata=metadata,
+                supersedes_id=args.supersedes_id,
+            )
+        )
+        return 0
+    if args.command == "list-subject-notes":
+        run_migrations(settings.database_url)
+        rows = list_subject_notes(
+            settings.database_url,
+            subject_type=args.subject_type,
+            subject_ref=args.subject,
+            note_kind=args.kind,
+            limit=args.limit,
+        )
+        _print_json({"count": len(rows), "subject_note_context": rows, "notes": rows})
         return 0
     if args.command == "record-person-note":
         run_migrations(settings.database_url)
