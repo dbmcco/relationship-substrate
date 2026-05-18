@@ -140,7 +140,13 @@ def upsert_organization_enrichment(
                 WHERE lower(name) = lower(%s)
                 OR (%s::text IS NOT NULL AND lower(domain) = %s)
                 OR (%s::text IS NOT NULL AND (metadata->'enrichment'->'aliases') ? %s)
-                ORDER BY updated_at DESC
+                ORDER BY
+                  CASE
+                    WHEN %s::text IS NOT NULL AND lower(domain) = %s THEN 0
+                    WHEN lower(name) = lower(%s) THEN 1
+                    ELSE 2
+                  END,
+                  updated_at DESC
                 LIMIT 1
                 """,
                 (
@@ -149,6 +155,9 @@ def upsert_organization_enrichment(
                     normalized_domain,
                     normalized_domain or None,
                     normalized_domain,
+                    normalized_domain or None,
+                    normalized_domain,
+                    name,
                 ),
             )
             row = cur.fetchone()
@@ -306,12 +315,16 @@ def history_backed_organization_worklist(
     enrichments = organization_enrichment_by_name(database_url)
     enriched_names = sorted(enrichments.keys())
     missing_filter = (
-        "WHERE lower(COALESCE(dc.company_name, d.domain)) <> ALL(%s)"
+        """
+        WHERE lower(COALESCE(dc.company_name, d.domain)) <> ALL(%s)
+        AND d.domain <> ALL(%s)
+        """
         if missing_enrichment_only
         else ""
     )
     params: list[object] = [skipped, skipped, skipped_localparts, skipped_localparts, skipped_prefixes]
     if missing_enrichment_only:
+        params.append(enriched_names)
         params.append(enriched_names)
     params.append(limit)
     with psycopg.connect(database_url) as conn:
@@ -506,7 +519,8 @@ def history_backed_organization_worklist(
     worklist: list[dict[str, Any]] = []
     for row in rows:
         company_name = row[0]
-        enrichment = enrichments.get(company_name.lower())
+        domain = row[1]
+        enrichment = enrichments.get(company_name.lower()) or enrichments.get(str(domain or "").lower())
         has_enrichment = enrichment is not None
         if missing_enrichment_only and has_enrichment:
             continue
@@ -519,7 +533,7 @@ def history_backed_organization_worklist(
         worklist.append(
             {
                 "company_name": company_name,
-                "domain": row[1],
+                "domain": domain,
                 "known_people_count": known_people_count,
                 "direct_people_count": direct_people_count,
                 "email_interaction_count": email_interaction_count,

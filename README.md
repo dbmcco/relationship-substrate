@@ -99,6 +99,8 @@ uv run relationship-substrate list-identity-candidates --status candidate --limi
 uv run relationship-substrate show-identity-candidate --id "<candidate-id>"
 uv run relationship-substrate resolve-identity-candidate --id "<candidate-id>" --status rejected --note "review note"
 uv run relationship-substrate show-person --email "person@example.com"
+uv run relationship-substrate record-person-note --person "person@example.com" --kind context_fit --applies-to small_consulting_firm_discovery --note "Not a good fit for this search context."
+uv run relationship-substrate list-person-notes --person "person@example.com"
 uv run relationship-substrate prepare-relationship-tone-analysis --email "person@example.com" --evidence-limit 10 --prior-state-limit 3
 uv run relationship-substrate prepare-history-backed-outreach-proposal --actual-employee-count-min 10 --actual-employee-count-max 20 --consultant-count-min 10 --consultant-count-max 20 --limit 5 --research-context /path/to/current-research.json --evidence-limit 5
 uv run relationship-substrate embed-curated-contacts --provider ollama --model mxbai-embed-large:latest --limit 250
@@ -136,6 +138,8 @@ Current eval interpretation: the CLI now proves that Next Up curated exports can
 Identity candidates are unresolved review suggestions, not merges. The current candidate pass detects repeated non-generic email localparts across domains, suppresses role accounts such as `events`, `info`, and `hello`, and surfaces open candidate counts in the DB-backed operating picture metadata. Candidate review records a decision and note in evidence metadata; accepted/rejected/superseded decisions prevent the same pair from being regenerated.
 
 Person dossiers are factual inspection views for agents. `show-person --email` returns the canonical person, contact channels, relationship edge counters, matching interactions, source events, evidence refs, and identity candidates without adding semantic relationship-health interpretation.
+
+Person notes are explicit user/agent corrections layered onto canonical people. `record-person-note` stores notes such as fit exclusions, identity context, or relationship caveats; `list-person-notes`, `show-person`, and history-backed search expose those notes so later agents can avoid repeating known-bad paths.
 
 Freshness is mechanical, not a relationship-health score. Operating-picture rows and person dossiers expose `freshness_state`, `days_since_last_interaction`, and `freshness_basis` from the last materialized interaction only: `recent` (0-30 days), `active` (31-120), `stale` (121-365), `dormant` (366+), or `unknown` when no interaction is materialized.
 

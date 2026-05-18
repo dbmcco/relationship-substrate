@@ -53,6 +53,23 @@ bounded by `RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_LIMIT` and can be made 
 RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_APPLY=0
 ```
 
+Organization research skips domains or company names that already have a recent research snapshot
+before making a Perplexity call. Static organization enrichment defaults to a 30-day skip window,
+and current-news research defaults to a 24-hour skip window:
+
+```bash
+RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_TTL_HOURS=720
+RELATIONSHIP_SUBSTRATE_ORGANIZATION_NEWS_TTL_HOURS=24
+```
+
+If static organization research returns an unusable response, the worker retries once with a
+domain-focused alternate plan. If that also fails, it records an `organization_research_failure`
+snapshot and skips that organization until the retry-after window expires:
+
+```bash
+RELATIONSHIP_SUBSTRATE_ORGANIZATION_FAILURE_RETRY_HOURS=24
+```
+
 Tone/tenor defaults to disabled to avoid local Ollama CPU/power spikes. It can be enabled, made
 dry-run, or scaled with:
 

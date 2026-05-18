@@ -436,6 +436,52 @@ def test_agent_cli_shows_person_dossier(database_url, tmp_path, monkeypatch, cap
     assert dossier["interactions"][0]["subject"] == "CLI dossier meeting"
 
 
+def test_agent_cli_records_and_lists_person_notes(database_url, monkeypatch, capsys):
+    run_migrations(database_url)
+    email = f"cli-person-note-{uuid4().hex}@example.com"
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.person (
+                  display_name, primary_email, source_posture, provenance_status
+                )
+                VALUES ('CLI Person Note', %s, 'direct_interaction', 'test')
+                """,
+                (email,),
+            )
+        conn.commit()
+
+    recorded = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "record-person-note",
+        "--person",
+        email,
+        "--kind",
+        "context_fit",
+        "--applies-to",
+        "small_consulting_firm_discovery",
+        "--note",
+        "This is known context the agent should carry forward.",
+    )
+    listed = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "list-person-notes",
+        "--person",
+        email,
+    )
+
+    assert recorded["person_email"] == email
+    assert listed["count"] == 1
+    assert listed["notes"][0]["note_kind"] == "context_fit"
+
+
 def test_agent_cli_searches_people_by_role_and_company_size(
     database_url, tmp_path, monkeypatch, capsys
 ):

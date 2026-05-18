@@ -107,6 +107,57 @@ def test_import_organization_enrichments_upserts_reviewed_facts(database_url):
     assert enrichments[alias]["consultant_count_estimate"] == 12
 
 
+def test_upsert_organization_enrichment_prefers_existing_domain_over_matching_name(database_url):
+    run_migrations(database_url)
+    domain = f"domain-precedence-{uuid4().hex}.example"
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.organization (
+                  name, domain, source_posture, provenance_status, metadata
+                )
+                VALUES
+                  ('Shared Research Name', NULL, 'curated_export', 'test', '{}'::jsonb),
+                  ('Existing Domain Owner', %s, 'curated_export', 'test', '{}'::jsonb)
+                """,
+                (domain,),
+            )
+        conn.commit()
+
+    upsert_organization_enrichment(
+        database_url,
+        company_name="Shared Research Name",
+        domain=domain,
+        company_type="domain matched company",
+        employee_count_min=10,
+        employee_count_max=20,
+        source_name="perplexity_research",
+        source_url="https://example.com/domain",
+        provenance_status="external_research",
+    )
+
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT name, metadata->'enrichment'->>'company_type'
+                FROM relationship_substrate.organization
+                WHERE domain = %s
+                """,
+                (domain,),
+            )
+            assert cur.fetchone() == ("Existing Domain Owner", "domain matched company")
+            cur.execute(
+                """
+                SELECT domain
+                FROM relationship_substrate.organization
+                WHERE name = 'Shared Research Name'
+                """
+            )
+            assert cur.fetchone() == (None,)
+
+
 def test_history_backed_organization_worklist_ranks_companies_by_direct_history(database_url):
     run_migrations(database_url)
     run_id = uuid4().hex

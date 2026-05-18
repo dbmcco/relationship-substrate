@@ -116,6 +116,18 @@ def _relationship_state(row: tuple) -> dict[str, Any]:
     }
 
 
+def _person_note(row: tuple) -> dict[str, Any]:
+    return {
+        "id": str(row[0]),
+        "note_kind": row[1],
+        "applies_to": row[2],
+        "note": row[3],
+        "source": row[4],
+        "metadata": row[5] or {},
+        "created_at": row[6].isoformat() if row[6] else None,
+    }
+
+
 def get_person_dossier(database_url: str, *, email: str) -> dict[str, Any]:
     normalized_email = email.strip().lower()
     with psycopg.connect(database_url) as conn:
@@ -239,6 +251,18 @@ def get_person_dossier(database_url: str, *, email: str) -> dict[str, Any]:
             )
             relationship_state_rows = cur.fetchall()
 
+            cur.execute(
+                """
+                SELECT id, note_kind, applies_to, note, source, metadata, created_at
+                FROM relationship_substrate.person_note
+                WHERE person_id = %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT 50
+                """,
+                (person_id,),
+            )
+            person_note_rows = cur.fetchall()
+
     return {
         "person": _person(person_row),
         "contact_channels": [_contact_channel(row) for row in contact_rows],
@@ -248,4 +272,5 @@ def get_person_dossier(database_url: str, *, email: str) -> dict[str, Any]:
         "evidence_refs": [_evidence_ref(row) for row in evidence_ref_rows],
         "identity_candidates": [_identity_candidate(row) for row in identity_candidate_rows],
         "relationship_states": [_relationship_state(row) for row in relationship_state_rows],
+        "person_notes": [_person_note(row) for row in person_note_rows],
     }

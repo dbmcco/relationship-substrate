@@ -5,9 +5,11 @@ import os
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+import psycopg
 
 from relationship_substrate.organizations import (
     history_backed_organization_worklist,
@@ -18,6 +20,8 @@ from relationship_substrate.research import upsert_research_snapshot
 
 DEFAULT_PERPLEXITY_ENDPOINT = "https://api.perplexity.ai/chat/completions"
 DEFAULT_PERPLEXITY_MODEL = "sonar-pro"
+DEFAULT_ORGANIZATION_RESEARCH_TTL_HOURS = 24 * 30
+DEFAULT_ORGANIZATION_FAILURE_RETRY_HOURS = 24
 
 ResearchCompany = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -39,6 +43,161 @@ def _coerce_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _coerce_positive_int(value: object, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return parsed
+
+
+def _retry_after(ttl_hours: int) -> str:
+    return (datetime.now(UTC) + timedelta(hours=ttl_hours)).isoformat()
+
+
+def _organization_lookup_keys(company: dict[str, Any]) -> set[str]:
+    keys = {
+        _clean_text(company.get("company_name")).lower(),
+        _clean_text(company.get("domain")).lower(),
+    }
+    enrichment = company.get("organization_enrichment")
+    if isinstance(enrichment, dict):
+        keys.add(_clean_text(enrichment.get("domain")).lower())
+        for alias in enrichment.get("aliases") or []:
+            keys.add(_clean_text(alias).lower())
+    return {key for key in keys if key}
+
+
+def _recent_research_keys(
+    database_url: str,
+    *,
+    subject_type: str,
+    keys: set[str],
+    ttl_hours: int,
+) -> set[str]:
+    if not keys:
+        return set()
+    cutoff = datetime.now(UTC) - timedelta(hours=ttl_hours)
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT lower(subject)
+                FROM relationship_substrate.research_snapshot
+                WHERE subject_type = %s
+                AND retrieved_at >= %s
+                AND (
+                  lower(subject) = ANY(%s)
+                  OR lower(metadata->>'domain') = ANY(%s)
+                  OR lower(metadata->>'company_name') = ANY(%s)
+                )
+                """,
+                (subject_type, cutoff, sorted(keys), sorted(keys), sorted(keys)),
+            )
+            rows = cur.fetchall()
+    return {row[0] for row in rows if row[0]}
+
+
+def _active_failure_keys(
+    database_url: str,
+    *,
+    subject_type: str,
+    keys: set[str],
+) -> set[str]:
+    if not keys:
+        return set()
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT lower(subject)
+                FROM relationship_substrate.research_snapshot
+                WHERE subject_type = %s
+                AND (
+                  lower(subject) = ANY(%s)
+                  OR lower(metadata->>'domain') = ANY(%s)
+                  OR lower(metadata->>'company_name') = ANY(%s)
+                )
+                AND nullif(metadata->>'retry_after', '')::timestamptz > now()
+                """,
+                (subject_type, sorted(keys), sorted(keys), sorted(keys)),
+            )
+            rows = cur.fetchall()
+    return {row[0] for row in rows if row[0]}
+
+
+def _should_skip_recent_research(
+    database_url: str,
+    *,
+    company: dict[str, Any],
+    subject_type: str,
+    ttl_hours: int,
+) -> bool:
+    keys = _organization_lookup_keys(company)
+    return bool(_recent_research_keys(database_url, subject_type=subject_type, keys=keys, ttl_hours=ttl_hours))
+
+
+def _should_skip_active_failure(
+    database_url: str,
+    *,
+    company: dict[str, Any],
+    subject_type: str,
+) -> bool:
+    keys = _organization_lookup_keys(company)
+    return bool(_active_failure_keys(database_url, subject_type=subject_type, keys=keys))
+
+
+def _classify_research_failure(exc: Exception) -> str:
+    message = str(exc).lower()
+    if "did not contain a json object" in message or "requires at least one source url" in message:
+        return "invalid_response"
+    if "429" in message or "rate limit" in message:
+        return "rate_limited"
+    if "perplexity" in message and any(code in message for code in (" 500", " 502", " 503", " 504")):
+        return "transient_provider_error"
+    if "unique constraint" in message:
+        return "persistence_conflict"
+    return "research_failure"
+
+
+def _alternate_research_company(company: dict[str, Any], *, previous_error: str) -> dict[str, Any]:
+    return {
+        **company,
+        "research_plan": "domain_focused_retry",
+        "previous_research_error": previous_error,
+    }
+
+
+def _record_research_failure(
+    database_url: str,
+    *,
+    company: dict[str, Any],
+    subject_type: str,
+    exc: Exception,
+    failure_kind: str,
+    retry_ttl_hours: int,
+    attempts: int,
+) -> dict[str, Any]:
+    subject = _clean_text(company.get("domain")) or _clean_text(company.get("company_name")) or "unknown_organization"
+    return upsert_research_snapshot(
+        database_url,
+        subject_type=subject_type,
+        subject=subject,
+        summary=str(exc)[:1000] or failure_kind,
+        confidence="failure",
+        sources=[],
+        metadata={
+            "company_name": company.get("company_name"),
+            "domain": company.get("domain"),
+            "failure_kind": failure_kind,
+            "retry_after": _retry_after(retry_ttl_hours),
+            "attempts": attempts,
+        },
+    )
 
 
 def parse_research_json(content: str) -> dict[str, Any]:
@@ -140,6 +299,17 @@ def _organization_research_prompt(company: dict[str, Any]) -> str:
         }
         for person in strongest_people[:5]
     ]
+    plan = _clean_text(company.get("research_plan"))
+    previous_error = _clean_text(company.get("previous_research_error"))
+    retry_guidance = ""
+    if plan == "domain_focused_retry":
+        retry_guidance = (
+            "\nRetry plan: the previous response was unusable. Focus on the supplied domain, "
+            "official website pages, company profile pages, and source URLs. Return valid JSON only. "
+            "If a field cannot be sourced, use null rather than prose outside JSON.\n"
+        )
+        if previous_error:
+            retry_guidance += f"Previous error: {previous_error[:300]}\n"
     return (
         "Research this organization for a personal relationship intelligence system.\n"
         "Return only a JSON object with these keys: company_name, domain, aliases, "
@@ -147,6 +317,7 @@ def _organization_research_prompt(company: dict[str, Any]) -> str:
         "consultant_count_estimate, summary, confidence, sources.\n"
         "Use null when a sourced value is unavailable. Include source URLs in sources.\n"
         "Do not infer company size or consultant count without cited evidence.\n\n"
+        f"{retry_guidance}"
         f"Organization: {company.get('company_name')}\n"
         f"Domain: {company.get('domain')}\n"
         f"Known interaction counts: email={company.get('email_interaction_count')}, "
@@ -304,8 +475,18 @@ def run_organization_enrichment_research(
     skipped_domains: set[str] | None = None,
     skipped_system_localparts: set[str] | None = None,
     skipped_system_prefixes: set[str] | None = None,
+    recent_research_ttl_hours: int | None = None,
+    failure_retry_ttl_hours: int | None = None,
 ) -> dict[str, Any]:
     research_company = research_company or perplexity_research_organization
+    recent_research_ttl_hours = recent_research_ttl_hours or _coerce_positive_int(
+        os.environ.get("RELATIONSHIP_SUBSTRATE_ORGANIZATION_RESEARCH_TTL_HOURS"),
+        default=DEFAULT_ORGANIZATION_RESEARCH_TTL_HOURS,
+    )
+    failure_retry_ttl_hours = failure_retry_ttl_hours or _coerce_positive_int(
+        os.environ.get("RELATIONSHIP_SUBSTRATE_ORGANIZATION_FAILURE_RETRY_HOURS"),
+        default=DEFAULT_ORGANIZATION_FAILURE_RETRY_HOURS,
+    )
     run_started_at = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = output_dir / run_started_at
     companies = history_backed_organization_worklist(
@@ -320,50 +501,101 @@ def run_organization_enrichment_research(
     snapshots: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     raw_results: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
     for company in companies:
-        try:
-            research = research_company(company)
-            raw_results.append({"company": company, "research": research})
-            record = organization_enrichment_record_from_research(company, research)
-            records.append(record)
-            if apply:
-                import_organization_enrichments(database_url, [record])
-                snapshot = upsert_research_snapshot(
-                    database_url,
-                    subject_type="organization",
-                    subject=record.get("domain") or record["company_name"],
-                    summary=record["summary"],
-                    confidence=record["confidence"],
-                    sources=record["sources"],
-                    metadata={
-                        "company_name": record["company_name"],
-                        "domain": record.get("domain"),
-                        "model": record.get("model"),
-                        "enrichment": {
-                            key: record.get(key)
-                            for key in (
-                                "company_type",
-                                "employee_count_min",
-                                "employee_count_max",
-                                "employee_count_label",
-                                "consultant_count_estimate",
-                            )
-                        },
-                    },
-                )
-                snapshots.append(snapshot)
-        except Exception as exc:  # noqa: BLE001 - failures are reported per work item.
-            failures.append(
+        if _should_skip_active_failure(
+            database_url,
+            company=company,
+            subject_type="organization_research_failure",
+        ):
+            skipped.append(
                 {
                     "company_name": company.get("company_name"),
                     "domain": company.get("domain"),
-                    "error": str(exc),
+                    "reason": "active_organization_research_failure_retry_after",
                 }
             )
+            continue
+        if _should_skip_recent_research(
+            database_url,
+            company=company,
+            subject_type="organization",
+            ttl_hours=recent_research_ttl_hours,
+        ):
+            skipped.append(
+                {
+                    "company_name": company.get("company_name"),
+                    "domain": company.get("domain"),
+                    "reason": "recent_organization_research_snapshot",
+                }
+            )
+            continue
+        attempts: list[dict[str, Any]] = [company]
+        attempt_count = 0
+        while attempts:
+            current_company = attempts.pop(0)
+            attempt_count += 1
+            try:
+                research = research_company(current_company)
+                raw_results.append({"company": current_company, "research": research, "attempt": attempt_count})
+                record = organization_enrichment_record_from_research(current_company, research)
+                records.append(record)
+                if apply:
+                    import_organization_enrichments(database_url, [record])
+                    snapshot = upsert_research_snapshot(
+                        database_url,
+                        subject_type="organization",
+                        subject=record.get("domain") or record["company_name"],
+                        summary=record["summary"],
+                        confidence=record["confidence"],
+                        sources=record["sources"],
+                        metadata={
+                            "company_name": record["company_name"],
+                            "domain": record.get("domain"),
+                            "model": record.get("model"),
+                            "enrichment": {
+                                key: record.get(key)
+                                for key in (
+                                    "company_type",
+                                    "employee_count_min",
+                                    "employee_count_max",
+                                    "employee_count_label",
+                                    "consultant_count_estimate",
+                                )
+                            },
+                        },
+                    )
+                    snapshots.append(snapshot)
+                break
+            except Exception as exc:  # noqa: BLE001 - failures are reported per work item.
+                failure_kind = _classify_research_failure(exc)
+                if failure_kind == "invalid_response" and attempt_count == 1:
+                    attempts.append(_alternate_research_company(company, previous_error=str(exc)))
+                    continue
+                failure = {
+                    "company_name": company.get("company_name"),
+                    "domain": company.get("domain"),
+                    "error": str(exc),
+                    "failure_kind": failure_kind,
+                    "attempts": attempt_count,
+                }
+                if apply:
+                    failure["snapshot"] = _record_research_failure(
+                        database_url,
+                        company=company,
+                        subject_type="organization_research_failure",
+                        exc=exc,
+                        failure_kind=failure_kind,
+                        retry_ttl_hours=failure_retry_ttl_hours,
+                        attempts=attempt_count,
+                    )
+                failures.append(failure)
+                break
     artifacts = {
         "worklist": _write_json(run_dir / "organization_worklist.json", companies),
         "raw_results": _write_json(run_dir / "raw_results.json", raw_results),
         "records": _write_json(run_dir / "organization_enrichment_records.json", records),
+        "skipped": _write_json(run_dir / "skipped.json", skipped),
         "failures": _write_json(run_dir / "failures.json", failures),
     }
     report = {
@@ -373,6 +605,8 @@ def run_organization_enrichment_research(
         "worklist_count": len(companies),
         "researched": len(records),
         "applied": len(snapshots) if apply else 0,
+        "skipped": skipped,
+        "skipped_count": len(skipped),
         "failed": len(failures),
         "records": records,
         "snapshots": snapshots,
@@ -394,8 +628,13 @@ def run_organization_news_research(
     skipped_domains: set[str] | None = None,
     skipped_system_localparts: set[str] | None = None,
     skipped_system_prefixes: set[str] | None = None,
+    recent_research_ttl_hours: int | None = None,
 ) -> dict[str, Any]:
     research_company_news = research_company_news or perplexity_research_organization_news
+    recent_research_ttl_hours = recent_research_ttl_hours or _coerce_positive_int(
+        os.environ.get("RELATIONSHIP_SUBSTRATE_ORGANIZATION_NEWS_TTL_HOURS"),
+        default=24,
+    )
     run_started_at = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = output_dir / run_started_at
     companies = history_backed_organization_worklist(
@@ -409,7 +648,22 @@ def run_organization_news_research(
     snapshots: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     raw_results: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
     for company in companies:
+        if _should_skip_recent_research(
+            database_url,
+            company=company,
+            subject_type="organization_news",
+            ttl_hours=recent_research_ttl_hours,
+        ):
+            skipped.append(
+                {
+                    "company_name": company.get("company_name"),
+                    "domain": company.get("domain"),
+                    "reason": "recent_organization_news_snapshot",
+                }
+            )
+            continue
         try:
             research = research_company_news(company)
             raw_results.append({"company": company, "research": research})
@@ -448,6 +702,7 @@ def run_organization_news_research(
         "worklist": _write_json(run_dir / "organization_news_worklist.json", companies),
         "raw_results": _write_json(run_dir / "raw_results.json", raw_results),
         "snapshots": _write_json(run_dir / "research_snapshots.json", snapshots),
+        "skipped": _write_json(run_dir / "skipped.json", skipped),
         "failures": _write_json(run_dir / "failures.json", failures),
     }
     report = {
@@ -457,6 +712,8 @@ def run_organization_news_research(
         "worklist_count": len(companies),
         "researched": len(raw_results),
         "applied": len(snapshots) if apply else 0,
+        "skipped": skipped,
+        "skipped_count": len(skipped),
         "failed": len(failures),
         "snapshots": snapshots,
         "failures": failures,

@@ -116,6 +116,57 @@ def _enrichment_matches_consultant_count(
     return True
 
 
+def _person_notes_by_id(
+    cur: psycopg.Cursor,
+    person_ids: list[object],
+    *,
+    limit_per_person: int = 5,
+) -> dict[str, list[dict[str, Any]]]:
+    if not person_ids:
+        return {}
+    cur.execute(
+        """
+        WITH ranked_notes AS (
+          SELECT
+            person_id,
+            id,
+            note_kind,
+            applies_to,
+            note,
+            source,
+            metadata,
+            created_at,
+            row_number() OVER (
+              PARTITION BY person_id
+              ORDER BY created_at DESC, id DESC
+            ) AS note_rank
+          FROM relationship_substrate.person_note
+          WHERE person_id = ANY(%s)
+        )
+        SELECT person_id, id, note_kind, applies_to, note, source, metadata, created_at
+        FROM ranked_notes
+        WHERE note_rank <= %s
+        ORDER BY person_id, created_at DESC, id DESC
+        """,
+        (person_ids, limit_per_person),
+    )
+    notes: dict[str, list[dict[str, Any]]] = {}
+    for row in cur.fetchall():
+        person_id = str(row[0])
+        notes.setdefault(person_id, []).append(
+            {
+                "id": str(row[1]),
+                "note_kind": row[2],
+                "applies_to": row[3],
+                "note": row[4],
+                "source": row[5],
+                "metadata": row[6] or {},
+                "created_at": row[7].isoformat() if row[7] else None,
+            }
+        )
+    return notes
+
+
 def _curated_contact_rows(
     database_url: str,
     *,
@@ -384,6 +435,7 @@ def search_history_backed_people(
                 params,
             )
             rows = cur.fetchall()
+            notes_by_person_id = _person_notes_by_id(cur, [row[0] for row in rows])
 
     results: list[dict[str, Any]] = []
     seen_emails: set[str] = set()
@@ -434,6 +486,7 @@ def search_history_backed_people(
                     f"actual_employee_count:{enrichment.get('employee_count_min')}-{enrichment.get('employee_count_max')}",
                     f"consultant_count_estimate:{enrichment.get('consultant_count_estimate')}",
                 ],
+                "person_notes": notes_by_person_id.get(str(row[0]), []),
             }
         )
         seen_emails.add(email)

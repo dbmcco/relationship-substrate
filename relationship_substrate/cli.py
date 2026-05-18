@@ -47,6 +47,7 @@ from relationship_substrate.organizations import (
     organization_enrichment_worklist,
     upsert_organization_enrichment,
 )
+from relationship_substrate.person_notes import list_person_notes, record_person_note
 from relationship_substrate.operations import (
     DEFAULT_NORTH_STAR_SEMANTIC_QUERY,
     clean_set_progress,
@@ -286,6 +287,17 @@ def build_parser() -> argparse.ArgumentParser:
     list_feedback.add_argument("--packet-id", default=None)
     list_feedback.add_argument("--person-email", default=None)
     list_feedback.add_argument("--limit", type=int, default=50)
+    record_person_note_parser = subparsers.add_parser("record-person-note")
+    record_person_note_parser.add_argument("--person", required=True)
+    record_person_note_parser.add_argument("--kind", required=True)
+    record_person_note_parser.add_argument("--note", required=True)
+    record_person_note_parser.add_argument("--applies-to", default=None)
+    record_person_note_parser.add_argument("--source", default="user_correction")
+    record_person_note_parser.add_argument("--metadata", default=None)
+    list_person_notes_parser = subparsers.add_parser("list-person-notes")
+    list_person_notes_parser.add_argument("--person", default=None)
+    list_person_notes_parser.add_argument("--kind", default=None)
+    list_person_notes_parser.add_argument("--limit", type=int, default=50)
     status = subparsers.add_parser("substrate-status")
     status.add_argument("--organization-worklist-limit", type=int, default=100)
     clean_progress = subparsers.add_parser("clean-set-progress")
@@ -1146,6 +1158,31 @@ def main() -> int:
             limit=args.limit,
         )
         _print_json({"count": len(rows), "feedback": rows})
+        return 0
+    if args.command == "record-person-note":
+        run_migrations(settings.database_url)
+        metadata = json.loads(args.metadata) if args.metadata else {}
+        _print_json(
+            record_person_note(
+                settings.database_url,
+                person_ref=args.person,
+                note_kind=args.kind,
+                applies_to=args.applies_to,
+                note=args.note,
+                source=args.source,
+                metadata=metadata,
+            )
+        )
+        return 0
+    if args.command == "list-person-notes":
+        run_migrations(settings.database_url)
+        rows = list_person_notes(
+            settings.database_url,
+            person_ref=args.person,
+            note_kind=args.kind,
+            limit=args.limit,
+        )
+        _print_json({"count": len(rows), "notes": rows})
         return 0
     if args.command == "search-people":
         semantic_query_embedding = None
