@@ -24,6 +24,7 @@ GENERIC_ROLE_LOCALPARTS = {
     "support",
     "team",
 }
+MAX_IDENTITY_CANDIDATE_GROUP_SIZE = 25
 
 
 def _email_localpart(email: str | None) -> str | None:
@@ -33,6 +34,27 @@ def _email_localpart(email: str | None) -> str | None:
     if not localpart or "+" in localpart or localpart in GENERIC_ROLE_LOCALPARTS:
         return None
     return localpart
+
+
+def _email_domain(email: str | None) -> str | None:
+    if not email or "@" not in email:
+        return None
+    domain = email.split("@", 1)[1].strip().lower()
+    if not domain:
+        return None
+    return domain
+
+
+def _normalize_display_name(name: str | None) -> str | None:
+    if not name:
+        return None
+    normalized = " ".join(
+        "".join(ch for ch in token if ch.isalnum())
+        for token in name.strip().lower().split()
+    ).strip()
+    if not normalized:
+        return None
+    return normalized
 
 
 def _ensure_source_identity(cur: psycopg.Cursor, *, person_id: str, email: str, name: str) -> str:
@@ -199,15 +221,22 @@ def generate_identity_candidates(database_url: str) -> dict[str, int | str]:
                     "display_name": row[1],
                     "primary_email": row[2],
                     "localpart": _email_localpart(row[2]),
+                    "domain": _email_domain(row[2]),
+                    "normalized_name": _normalize_display_name(row[1]),
                 }
                 for row in cur.fetchall()
             ]
 
             by_localpart: dict[str, list[dict]] = {}
+            by_domain_name: dict[tuple[str, str], list[dict]] = {}
             for person in people:
                 localpart = person["localpart"]
                 if localpart:
                     by_localpart.setdefault(localpart, []).append(person)
+                domain = person["domain"]
+                normalized_name = person["normalized_name"]
+                if domain and normalized_name:
+                    by_domain_name.setdefault((domain, normalized_name), []).append(person)
 
             stats = {
                 "source": "identity_candidate",
@@ -216,6 +245,8 @@ def generate_identity_candidates(database_url: str) -> dict[str, int | str]:
             }
             for localpart, group in by_localpart.items():
                 if len(group) < 2:
+                    continue
+                if len(group) > MAX_IDENTITY_CANDIDATE_GROUP_SIZE:
                     continue
                 stats["groups_seen"] += 1
                 for left, right in itertools.combinations(group, 2):
@@ -249,6 +280,54 @@ def generate_identity_candidates(database_url: str) -> dict[str, int | str]:
                             Jsonb(
                                 {
                                     "match_key": localpart,
+                                    "left_email": left["primary_email"],
+                                    "right_email": right["primary_email"],
+                                    "merge_policy": "candidate_only",
+                                }
+                            ),
+                        ),
+                    )
+                    stats["candidate_pairs"] += 1
+
+            for (domain, normalized_name), group in by_domain_name.items():
+                if len(group) < 2:
+                    continue
+                if len(group) > MAX_IDENTITY_CANDIDATE_GROUP_SIZE:
+                    continue
+                for left, right in itertools.combinations(group, 2):
+                    if left["localpart"] == right["localpart"]:
+                        continue
+                    source_identity_id = _ensure_source_identity(
+                        cur,
+                        person_id=left["person_id"],
+                        email=left["primary_email"],
+                        name=left["display_name"],
+                    )
+                    if _candidate_exists(
+                        cur,
+                        source_identity_id=source_identity_id,
+                        candidate_id=right["person_id"],
+                        reason="same_email_domain_and_name",
+                    ):
+                        continue
+                    cur.execute(
+                        """
+                        INSERT INTO relationship_substrate.identity_candidate (
+                          source_identity_id,
+                          candidate_type,
+                          candidate_id,
+                          reason,
+                          evidence
+                        )
+                        VALUES (%s, 'person', %s, 'same_email_domain_and_name', %s)
+                        """,
+                        (
+                            source_identity_id,
+                            right["person_id"],
+                            Jsonb(
+                                {
+                                    "domain": domain,
+                                    "normalized_name": normalized_name,
                                     "left_email": left["primary_email"],
                                     "right_email": right["primary_email"],
                                     "merge_policy": "candidate_only",

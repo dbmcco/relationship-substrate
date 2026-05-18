@@ -114,3 +114,29 @@ def test_materialize_calendar_events_is_idempotent(database_url):
     assert len(rows) == 1
     assert rows[0]["interaction_count"] == 1
     assert rows[0]["calendar_interaction_count"] == 1
+
+
+def test_materialize_calendar_events_skips_self_alias_variants(database_url):
+    run_migrations(database_url)
+    _clear_calendar_events(database_url)
+    localpart = f"sam-calendar-{uuid4().hex}"
+    upsert_source_event(
+        database_url,
+        _calendar_event(
+            attendees=[
+                {"email": "braydonjm+calendar@gmail.com"},
+                {"email": "braydon.jm@gmail.com"},
+                {"email": f"{localpart}@example.com", "displayName": "Sam Example"},
+            ],
+            event_id=f"event-{localpart}",
+        ),
+    )
+
+    stats = materialize_calendar_events(
+        database_url,
+        self_aliases={"braydonjm@gmail.com"},
+        skipped_domains=set(),
+    )
+
+    assert stats["attendees_materialized"] == 1
+    assert stats["skipped_self"] == 2

@@ -63,6 +63,7 @@ from relationship_substrate.outreach import (
 )
 from relationship_substrate.relationship_intelligence import (
     persist_relationship_state,
+    propose_relationship_state_live,
     prepare_relationship_intelligence_packet,
     prepare_relationship_strength_analysis_packet,
     prepare_relationship_tone_tenor_analysis_packet,
@@ -77,6 +78,7 @@ from relationship_substrate.repositories import (
     upsert_source_event,
 )
 from relationship_substrate.search import DEFAULT_ROLE_KEYWORDS, search_history_backed_people, search_people
+from relationship_substrate.self_identity import is_self_identity_email
 from relationship_substrate.relationship_strength_workers import run_relationship_strength_analysis
 from relationship_substrate.tone_tenor_workers import run_relationship_tone_tenor_analysis
 
@@ -212,6 +214,12 @@ def build_parser() -> argparse.ArgumentParser:
     persist_state = subparsers.add_parser("persist-relationship-state")
     persist_state.add_argument("--email", required=True)
     persist_state.add_argument("--proposal", required=True)
+    propose_state_live = subparsers.add_parser("propose-relationship-state-live")
+    propose_state_live.add_argument("--email", required=True)
+    propose_state_live.add_argument("--model-route", required=True)
+    propose_state_live.add_argument("--registry-service", default="relationship-substrate")
+    propose_state_live.add_argument("--registry-path", default=None)
+    propose_state_live.add_argument("--evidence-limit", type=int, default=10)
     search = subparsers.add_parser("search-people")
     search.add_argument("--role-keywords", default=",".join(DEFAULT_ROLE_KEYWORDS))
     search.add_argument("--known-people-at-company-min", "--company-size-min", type=int, default=None)
@@ -464,7 +472,7 @@ def ingest_msgvault_sender_rows(
         if not email:
             stats["skipped_missing_email"] += 1
             continue
-        if email in self_aliases:
+        if is_self_identity_email(email, aliases=self_aliases):
             stats["skipped_self"] += 1
             continue
         domain = email.rsplit("@", 1)[-1]
@@ -995,6 +1003,18 @@ def main() -> int:
         proposal = json.loads(Path(args.proposal).read_text(encoding="utf-8"))
         _print_json(persist_relationship_state(settings.database_url, email=args.email, proposal=proposal))
         return 0
+    if args.command == "propose-relationship-state-live":
+        run_migrations(settings.database_url)
+        kwargs = {
+            "email": args.email,
+            "route_key": args.model_route,
+            "service_name": args.registry_service,
+            "evidence_limit": args.evidence_limit,
+        }
+        if args.registry_path:
+            kwargs["registry_path"] = args.registry_path
+        _print_json(propose_relationship_state_live(settings.database_url, **kwargs))
+        return 0
     if args.command == "embed-curated-contacts":
         run_migrations(settings.database_url)
         _print_json(
@@ -1296,12 +1316,7 @@ def main() -> int:
         )
         return 0
     if args.command == "export-operating-picture":
-        if args.from_db:
-            _print_json(operating_picture_from_db(settings.database_url, limit=args.limit))
-        else:
-            from relationship_substrate.read_models import build_relationship_operating_picture
-
-            _print_json(build_relationship_operating_picture([]))
+        _print_json(operating_picture_from_db(settings.database_url, limit=args.limit))
         return 0
     if args.command == "eval-local":
         _print_json(

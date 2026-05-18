@@ -71,6 +71,37 @@ def test_ingest_msgvault_sender_rows_filters_self_aliases(database_url):
     assert rows == [("direct_interaction", "msgvault_profile", "external@example.com")]
 
 
+def test_ingest_msgvault_sender_rows_filters_self_alias_variants(database_url):
+    run_migrations(database_url)
+    _delete_sender_events(
+        database_url,
+        "braydonjm+history@gmail.com",
+        "braydon.jm@gmail.com",
+        "external@example.com",
+    )
+
+    stats = ingest_msgvault_sender_rows(
+        database_url,
+        [
+            {"email": "braydonjm+history@gmail.com", "message_count": 11721},
+            {"email": "braydon.jm@gmail.com", "message_count": 930},
+            {"email": "external@example.com", "message_count": 2600},
+        ],
+        self_aliases={"braydonjm@gmail.com"},
+        skipped_domains=set(),
+    )
+
+    assert stats == {
+        "source": "msgvault",
+        "events_seen": 3,
+        "events_upserted": 1,
+        "skipped_self": 2,
+        "skipped_domain": 0,
+        "skipped_system": 0,
+        "skipped_missing_email": 0,
+    }
+
+
 def test_ingest_msgvault_sender_rows_filters_skipped_domains(database_url):
     run_migrations(database_url)
     _delete_sender_events(database_url, "anne@intempio.com", "external@example.com")

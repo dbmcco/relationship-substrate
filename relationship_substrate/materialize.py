@@ -7,6 +7,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from relationship_substrate.repositories import get_source_event, list_source_events
+from relationship_substrate.self_identity import is_self_identity_email
 
 
 def _clean_email(value: object) -> str | None:
@@ -348,7 +349,9 @@ def materialize_calendar_events(
                     if email is None:
                         stats["skipped_missing_email"] += 1
                         continue
-                    if email in self_aliases or (isinstance(attendee, dict) and attendee.get("self") is True):
+                    if is_self_identity_email(email, aliases=self_aliases) or (
+                        isinstance(attendee, dict) and attendee.get("self") is True
+                    ):
                         stats["skipped_self"] += 1
                         continue
                     if _email_domain(email) in skipped_domains:

@@ -43,6 +43,23 @@ def test_select_correspondence_seed_emails_applies_msgvault_skip_rules():
     ) == ["person@example.com", "advisor@example.org"]
 
 
+def test_select_correspondence_seed_emails_skips_self_alias_variants():
+    rows = [
+        {"email": "braydonjm+events@gmail.com", "message_count": 1000},
+        {"email": "braydon.jm@gmail.com", "message_count": 950},
+        {"email": "partner@example.com", "message_count": 900},
+    ]
+
+    assert select_correspondence_seed_emails(
+        rows,
+        limit=5,
+        self_aliases={"braydonjm@gmail.com"},
+        skipped_domains=set(),
+        skipped_system_localparts=set(),
+        skipped_system_prefixes=set(),
+    ) == ["partner@example.com"]
+
+
 def test_run_network_pipeline_cli_passes_operational_inputs(monkeypatch, tmp_path, capsys):
     from relationship_substrate import cli
 

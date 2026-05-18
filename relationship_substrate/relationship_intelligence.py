@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
+from uuid import uuid4
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -9,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from relationship_substrate.dossiers import get_person_dossier
 from relationship_substrate.freshness import relationship_freshness
+from relationship_substrate.model_registry import DEFAULT_COGNITION_PRESETS_PATH, resolve_model_route
 
 
 class RelationshipStateProposal(BaseModel):
@@ -31,6 +37,12 @@ class RelationshipStateProposal(BaseModel):
             if not has_id and not has_natural_key:
                 raise ValueError("each evidence_refs entry must include id or ref_type/ref_value")
         return value
+
+
+def _relationship_state_json_schema() -> dict[str, Any]:
+    schema = RelationshipStateProposal.model_json_schema()
+    schema["additionalProperties"] = False
+    return schema
 
 
 def _person_row(cur: psycopg.Cursor, *, email: str) -> tuple:
@@ -393,27 +405,49 @@ def persist_relationship_state(
                 for evidence_ref in parsed.evidence_refs
             ]
             supersedes_id = UUID(parsed.supersedes_id) if parsed.supersedes_id else None
-            cur.execute(
-                """
-                INSERT INTO relationship_substrate.relationship_state (
-                  person_id, state_kind, summary, rationale, evidence_refs, supersedes_id
-                )
-                VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING id, state_kind, summary, rationale, evidence_refs, supersedes_id, created_at
-                """,
-                (
-                    person_id,
-                    parsed.state_kind,
-                    parsed.summary,
-                    parsed.rationale,
-                    Jsonb(evidence_refs),
-                    supersedes_id,
-                ),
+            row = _insert_relationship_state(
+                cur,
+                person_id=person_id,
+                parsed=parsed,
+                evidence_refs=evidence_refs,
+                supersedes_id=supersedes_id,
             )
-            row = cur.fetchone()
         conn.commit()
+    return _relationship_state_payload(row)
+
+
+def _insert_relationship_state(
+    cur: psycopg.Cursor,
+    *,
+    person_id: UUID,
+    parsed: RelationshipStateProposal,
+    evidence_refs: list[dict[str, str]],
+    supersedes_id: UUID | None,
+) -> tuple:
+    cur.execute(
+        """
+        INSERT INTO relationship_substrate.relationship_state (
+          person_id, state_kind, summary, rationale, evidence_refs, supersedes_id
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id, state_kind, summary, rationale, evidence_refs, supersedes_id, created_at
+        """,
+        (
+            person_id,
+            parsed.state_kind,
+            parsed.summary,
+            parsed.rationale,
+            Jsonb(evidence_refs),
+            supersedes_id,
+        ),
+    )
+    row = cur.fetchone()
     if row is None:
         raise RuntimeError("relationship_state insert returned no row")
+    return row
+
+
+def _relationship_state_payload(row: tuple) -> dict[str, Any]:
     return {
         "id": str(row[0]),
         "state_kind": row[1],
@@ -422,4 +456,253 @@ def persist_relationship_state(
         "evidence_refs": row[4],
         "supersedes_id": str(row[5]) if row[5] else None,
         "created_at": row[6].isoformat() if row[6] else None,
+    }
+
+
+PostJson = Callable[..., dict[str, Any]]
+
+
+def _default_post_json(
+    *,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    data = json.dumps(payload).encode("utf-8")
+    request = Request(url=url, data=data, headers=headers, method="POST")
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            body = response.read().decode("utf-8")
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"model request failed with status {exc.code}: {body}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"model request failed: {exc}") from exc
+    return json.loads(body)
+
+
+def _extract_json_content(response_payload: dict[str, Any]) -> dict[str, Any]:
+    choices = response_payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("model response did not contain choices")
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        raise ValueError("model response did not contain a message payload")
+    content = message.get("content")
+    if isinstance(content, str):
+        return json.loads(content)
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                text_value = part.get("text")
+                if isinstance(text_value, str):
+                    text_parts.append(text_value)
+        if text_parts:
+            return json.loads("".join(text_parts))
+    raise ValueError("model response content was not parseable JSON text")
+
+
+def propose_relationship_state_live(
+    database_url: str,
+    *,
+    email: str,
+    route_key: str,
+    service_name: str = "relationship-substrate",
+    registry_path: str = DEFAULT_COGNITION_PRESETS_PATH,
+    evidence_limit: int = 10,
+    post_json: PostJson = _default_post_json,
+) -> dict[str, Any]:
+    normalized_email = email.strip().lower()
+    packet = prepare_relationship_intelligence_packet(
+        database_url,
+        email=normalized_email,
+        evidence_limit=evidence_limit,
+    )
+    route = resolve_model_route(
+        route_key=route_key,
+        service_name=service_name,
+        registry_path=registry_path,
+    )
+    headers = {"Content-Type": "application/json"}
+    if route.api_key:
+        headers["Authorization"] = f"Bearer {route.api_key}"
+    request_payload: dict[str, Any] = {
+        "model": route.model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You produce relationship_state proposals only. "
+                    "Return JSON matching the provided schema and cite supplied evidence_refs."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(packet, sort_keys=True),
+            },
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "relationship_state_proposal",
+                "strict": True,
+                "schema": _relationship_state_json_schema(),
+            },
+        },
+    }
+    if route.max_tokens_default is not None:
+        request_payload["max_tokens"] = route.max_tokens_default
+
+    response_payload = post_json(
+        url=route.endpoint_url,
+        headers=headers,
+        payload=request_payload,
+        timeout_seconds=route.timeout_seconds,
+    )
+    proposal_raw = _extract_json_content(response_payload)
+    try:
+        parsed = RelationshipStateProposal.model_validate(proposal_raw)
+    except ValueError as exc:
+        raise ValueError(f"invalid relationship_state proposal from model route {route_key}: {exc}") from exc
+
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            person_id = _person_row(cur, email=normalized_email)[0]
+            linked_evidence_refs = [
+                _linked_evidence_ref(cur, email=normalized_email, evidence_ref=evidence_ref)
+                for evidence_ref in parsed.evidence_refs
+            ]
+            proposal_key = f"relationship_state_proposal:{normalized_email}:{uuid4().hex}"
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.source_event (
+                  source_name,
+                  source_event_type,
+                  source_event_key,
+                  source_payload,
+                  source_posture,
+                  provenance_status,
+                  trust_role
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, source_event_type, source_event_key, observed_at
+                """,
+                (
+                    "relationship_substrate",
+                    "relationship_state_model_proposal",
+                    proposal_key,
+                    Jsonb(
+                        {
+                            "email": normalized_email,
+                            "person_id": str(person_id),
+                            "model_route": {
+                                "route_key": route.route_key,
+                                "surface": route.surface,
+                                "provider": route.provider,
+                                "model": route.model,
+                                "credential_alias": route.credential_alias,
+                                "credential_env_var": route.credential_env_var,
+                            },
+                            "proposal": parsed.model_dump(),
+                            "packet": packet,
+                        }
+                    ),
+                    "derived_interpretation",
+                    "model_proposal",
+                    "model-authored interpreted relationship_state proposal",
+                ),
+            )
+            proposal_event_row = cur.fetchone()
+            if proposal_event_row is None:
+                raise RuntimeError("proposal source_event insert returned no row")
+
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.evidence_ref (
+                  source_event_id, ref_type, ref_value, metadata
+                )
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    proposal_event_row[0],
+                    "relationship_state_proposal",
+                    proposal_key,
+                    Jsonb(
+                        {
+                            "email": normalized_email,
+                            "route_key": route.route_key,
+                            "service_name": service_name,
+                        }
+                    ),
+                ),
+            )
+            proposal_ref_row = cur.fetchone()
+            if proposal_ref_row is None:
+                raise RuntimeError("proposal evidence_ref insert returned no row")
+
+            supersedes_id = UUID(parsed.supersedes_id) if parsed.supersedes_id else None
+            relationship_state_row = _insert_relationship_state(
+                cur,
+                person_id=person_id,
+                parsed=parsed,
+                evidence_refs=linked_evidence_refs,
+                supersedes_id=supersedes_id,
+            )
+
+            journal_evidence_refs = [
+                *linked_evidence_refs,
+                {"id": str(proposal_ref_row[0]), "ref_type": "relationship_state_proposal"},
+            ]
+            cur.execute(
+                """
+                INSERT INTO relationship_substrate.state_journal_entry (
+                  entity_type, entity_id, change_kind, summary, evidence_refs
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, entity_type, entity_id, change_kind, summary, evidence_refs, created_at
+                """,
+                (
+                    "relationship_state",
+                    relationship_state_row[0],
+                    "model_proposal_committed",
+                    parsed.summary,
+                    Jsonb(journal_evidence_refs),
+                ),
+            )
+            journal_row = cur.fetchone()
+            if journal_row is None:
+                raise RuntimeError("state_journal_entry insert returned no row")
+        conn.commit()
+
+    return {
+        "model_route": {
+            "route_key": route.route_key,
+            "surface": route.surface,
+            "provider": route.provider,
+            "model": route.model,
+            "service_name": service_name,
+            "registry_path": registry_path,
+            "credential_alias": route.credential_alias,
+            "credential_env_var": route.credential_env_var,
+        },
+        "proposal_event": {
+            "source_event_id": str(proposal_event_row[0]),
+            "source_event_type": proposal_event_row[1],
+            "source_event_key": proposal_event_row[2],
+            "observed_at": proposal_event_row[3].isoformat() if proposal_event_row[3] else None,
+            "evidence_ref_id": str(proposal_ref_row[0]),
+        },
+        "relationship_state": _relationship_state_payload(relationship_state_row),
+        "journal_entry": {
+            "id": str(journal_row[0]),
+            "entity_type": journal_row[1],
+            "entity_id": str(journal_row[2]),
+            "change_kind": journal_row[3],
+            "summary": journal_row[4],
+            "evidence_refs": journal_row[5],
+            "created_at": journal_row[6].isoformat() if journal_row[6] else None,
+        },
     }

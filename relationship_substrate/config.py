@@ -3,18 +3,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from relationship_substrate.self_identity import default_self_email_aliases
 
-DEFAULT_SELF_EMAIL_ALIASES = (
-    "b@aclara.us",
-    "b@mcco.us",
-    "braydon@intempio.com",
-    "braydon@intempio.us",
-    "braydon@j-mc.org",
-    "braydon@lightforgeworks.com",
-    "braydon@rvibe.com",
-    "braydon@synthyra.com",
-    "braydonjm@gmail.com",
-)
+DEFAULT_SELF_EMAIL_ALIASES = default_self_email_aliases()
 
 DEFAULT_SKIPPED_SENDER_DOMAINS = (
     "go2impact.com",

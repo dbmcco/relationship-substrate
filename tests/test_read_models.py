@@ -25,18 +25,50 @@ def test_operating_picture_shape_from_rows():
     assert picture["relationships"][0]["evidence_refs"] == ["person:person-1"]
 
 
-def test_export_operating_picture_cli_outputs_json(capsys, monkeypatch):
+def test_export_operating_picture_cli_uses_db_backed_rows_by_default(capsys, monkeypatch):
+    called: dict[str, object] = {}
+
+    def _fake_operating_picture_from_db(database_url: str, *, limit: int) -> dict[str, object]:
+        called["database_url"] = database_url
+        called["limit"] = limit
+        return {
+            "id": "relationship_operating_picture.braydon.v1",
+            "relationships": [
+                {
+                    "id": "relationship.person-1",
+                    "name": "Jane Doe",
+                    "metadata": {
+                        "provenance_status": "msgvault_message",
+                        "unresolved_identity_candidates": 2,
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr("relationship_substrate.cli.operating_picture_from_db", _fake_operating_picture_from_db)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["relationship-substrate", "export-operating-picture"],
+        [
+            "relationship-substrate",
+            "--database-url",
+            "postgresql://localhost:5432/relationship_substrate_test",
+            "export-operating-picture",
+            "--limit",
+            "7",
+        ],
     )
 
     assert main() == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["id"] == "relationship_operating_picture.braydon.v1"
-    assert payload["relationships"] == []
+    assert payload["relationships"][0]["metadata"]["provenance_status"] == "msgvault_message"
+    assert payload["relationships"][0]["metadata"]["unresolved_identity_candidates"] == 2
+    assert called == {
+        "database_url": "postgresql://localhost:5432/relationship_substrate_test",
+        "limit": 7,
+    }
 
 
 def test_operating_picture_distinguishes_curated_rows_without_interactions():

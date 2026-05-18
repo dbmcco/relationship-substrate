@@ -584,6 +584,64 @@ def test_agent_cli_embeds_curated_contacts_with_hash_provider(
     assert report["provider"] == "hash"
 
 
+def test_agent_cli_proposes_relationship_state_live_with_registry_route(
+    database_url, monkeypatch, capsys
+):
+    run_migrations(database_url)
+    captured: dict[str, object] = {}
+
+    def fake_live_proposal(
+        db_url: str,
+        *,
+        email: str,
+        route_key: str,
+        service_name: str,
+        evidence_limit: int,
+        registry_path: str | None = None,
+    ) -> dict[str, object]:
+        captured["db_url"] = db_url
+        captured["email"] = email
+        captured["route_key"] = route_key
+        captured["service_name"] = service_name
+        captured["evidence_limit"] = evidence_limit
+        captured["registry_path"] = registry_path
+        return {
+            "model_route": {"route_key": route_key},
+            "proposal_event": {"source_event_id": "proposal-id"},
+            "relationship_state": {"id": "state-id"},
+            "journal_entry": {"id": "journal-id"},
+        }
+
+    monkeypatch.setattr("relationship_substrate.cli.propose_relationship_state_live", fake_live_proposal)
+    report = _run_cli(
+        monkeypatch,
+        capsys,
+        "--database-url",
+        database_url,
+        "propose-relationship-state-live",
+        "--email",
+        "person@example.com",
+        "--model-route",
+        "relationship_substrate.relationship_state_proposal",
+        "--registry-service",
+        "relationship-substrate",
+        "--registry-path",
+        "/tmp/cognition-presets.toml",
+        "--evidence-limit",
+        "8",
+    )
+
+    assert report["relationship_state"]["id"] == "state-id"
+    assert captured == {
+        "db_url": database_url,
+        "email": "person@example.com",
+        "route_key": "relationship_substrate.relationship_state_proposal",
+        "service_name": "relationship-substrate",
+        "evidence_limit": 8,
+        "registry_path": "/tmp/cognition-presets.toml",
+    }
+
+
 def test_agent_cli_upserts_organization_enrichment(
     database_url, tmp_path, monkeypatch, capsys
 ):

@@ -5,6 +5,7 @@ from uuid import uuid4
 import psycopg
 
 from relationship_substrate.cli import generate_identity_candidate_report
+from relationship_substrate.db import run_migrations
 from relationship_substrate.identity import (
     generate_identity_candidates,
     get_identity_candidate,
@@ -32,6 +33,7 @@ def _insert_person(database_url: str, *, name: str, email: str) -> None:
 
 
 def test_generate_identity_candidates_for_same_localpart(database_url):
+    run_migrations(database_url)
     localpart = f"candidatealpha{uuid4().hex}"
     _insert_person(database_url, name="Candidate Alpha", email=f"{localpart}@example.com")
     _insert_person(database_url, name="Candidate Alpha", email=f"{localpart}@other.example")
@@ -56,6 +58,7 @@ def test_generate_identity_candidates_for_same_localpart(database_url):
 
 
 def test_generate_identity_candidates_is_idempotent(database_url):
+    run_migrations(database_url)
     localpart = f"candidatebeta{uuid4().hex}"
     _insert_person(database_url, name="Candidate Beta", email=f"{localpart}@example.com")
     _insert_person(database_url, name="Candidate Beta", email=f"{localpart}@other.example")
@@ -68,6 +71,7 @@ def test_generate_identity_candidates_is_idempotent(database_url):
 
 
 def test_generate_identity_candidates_skips_generic_role_localparts(database_url):
+    run_migrations(database_url)
     localpart = f"info{uuid4().hex}"
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
@@ -100,7 +104,83 @@ def test_generate_identity_candidates_skips_generic_role_localparts(database_url
             assert cur.fetchall() == []
 
 
+def test_generate_identity_candidates_for_same_domain_and_name_heuristic(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    domain = f"heuristic-{run_id}.example"
+    _insert_person(database_url, name="Alex Candidate", email=f"alex@{domain}")
+    _insert_person(database_url, name="Alex Candidate", email=f"a.candidate@{domain}")
+
+    stats = generate_identity_candidates(database_url)
+
+    assert stats["candidate_pairs"] >= 1
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT reason, evidence->>'domain', evidence->>'normalized_name'
+                FROM relationship_substrate.identity_candidate
+                WHERE reason = 'same_email_domain_and_name'
+                AND evidence->>'domain' = %s
+                """,
+                (domain,),
+            )
+            rows = cur.fetchall()
+
+    assert rows == [("same_email_domain_and_name", domain, "alex candidate")]
+
+
+def test_generate_identity_candidates_skips_same_domain_without_name_match(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    domain = f"heuristic-namemiss-{run_id}.example"
+    _insert_person(database_url, name="Alex Candidate", email=f"alex@{domain}")
+    _insert_person(database_url, name="Jordan Different", email=f"jordan@{domain}")
+
+    generate_identity_candidates(database_url)
+
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT count(*)
+                FROM relationship_substrate.identity_candidate
+                WHERE reason = 'same_email_domain_and_name'
+                AND evidence->>'domain' = %s
+                """,
+                (domain,),
+            )
+            assert cur.fetchone() == (0,)
+
+
+def test_generate_identity_candidates_skips_large_low_signal_groups(database_url):
+    run_migrations(database_url)
+    run_id = uuid4().hex
+    localpart = f"largegroup{run_id}"
+    for index in range(26):
+        _insert_person(
+            database_url,
+            name=f"Large Group {index}",
+            email=f"{localpart}@large-{index}-{run_id}.example",
+        )
+
+    generate_identity_candidates(database_url)
+
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT count(*)
+                FROM relationship_substrate.identity_candidate
+                WHERE evidence->>'match_key' = %s
+                """,
+                (localpart,),
+            )
+            assert cur.fetchone() == (0,)
+
+
 def test_operating_picture_rows_include_unresolved_identity_candidate_counts(database_url):
+    run_migrations(database_url)
     localpart = f"candidategamma{uuid4().hex}"
     emails = {f"{localpart}@example.com", f"{localpart}@other.example"}
     _insert_person(database_url, name="Candidate Gamma", email=f"{localpart}@example.com")
@@ -115,6 +195,7 @@ def test_operating_picture_rows_include_unresolved_identity_candidate_counts(dat
 
 
 def test_generate_identity_candidate_report_includes_total_open_candidates(database_url):
+    run_migrations(database_url)
     localpart = f"candidatedelta{uuid4().hex}"
     _insert_person(database_url, name="Candidate Delta", email=f"{localpart}@example.com")
     _insert_person(database_url, name="Candidate Delta", email=f"{localpart}@other.example")
@@ -127,13 +208,14 @@ def test_generate_identity_candidate_report_includes_total_open_candidates(datab
 
 
 def test_list_and_get_identity_candidates_include_review_evidence(database_url):
+    run_migrations(database_url)
     localpart = f"candidateepsilon{uuid4().hex}"
     _insert_person(database_url, name="Candidate Epsilon", email=f"{localpart}@example.com")
     _insert_person(database_url, name="Candidate Epsilon", email=f"{localpart}@other.example")
     generate_identity_candidates(database_url)
 
     candidates = list_identity_candidates(database_url, status="candidate", limit=1000)
-    candidate = next(row for row in candidates if row["evidence"]["match_key"] == localpart)
+    candidate = next(row for row in candidates if row["evidence"].get("match_key") == localpart)
     loaded = get_identity_candidate(database_url, candidate["id"])
 
     assert candidate["status"] == "candidate"
@@ -143,6 +225,7 @@ def test_list_and_get_identity_candidates_include_review_evidence(database_url):
 
 
 def test_resolve_identity_candidate_records_decision_without_merging_people(database_url):
+    run_migrations(database_url)
     localpart = f"candidatezeta{uuid4().hex}"
     _insert_person(database_url, name="Candidate Zeta", email=f"{localpart}@example.com")
     _insert_person(database_url, name="Candidate Zeta", email=f"{localpart}@other.example")
@@ -150,7 +233,7 @@ def test_resolve_identity_candidate_records_decision_without_merging_people(data
     candidate = next(
         row
         for row in list_identity_candidates(database_url, status="candidate", limit=1000)
-        if row["evidence"]["match_key"] == localpart
+        if row["evidence"].get("match_key") == localpart
     )
 
     resolved = resolve_identity_candidate(
@@ -178,6 +261,7 @@ def test_resolve_identity_candidate_records_decision_without_merging_people(data
 
 
 def test_resolved_identity_candidate_is_not_regenerated(database_url):
+    run_migrations(database_url)
     localpart = f"candidateeta{uuid4().hex}"
     _insert_person(database_url, name="Candidate Eta", email=f"{localpart}@example.com")
     _insert_person(database_url, name="Candidate Eta", email=f"{localpart}@other.example")
@@ -185,7 +269,7 @@ def test_resolved_identity_candidate_is_not_regenerated(database_url):
     candidate = next(
         row
         for row in list_identity_candidates(database_url, status="candidate", limit=1000)
-        if row["evidence"]["match_key"] == localpart
+        if row["evidence"].get("match_key") == localpart
     )
     resolve_identity_candidate(database_url, candidate["id"], status="rejected", note="Reviewed.")
 
@@ -195,5 +279,5 @@ def test_resolved_identity_candidate_is_not_regenerated(database_url):
     assert [
         row
         for row in list_identity_candidates(database_url, status="candidate", limit=1000)
-        if row["evidence"]["match_key"] == localpart
+        if row["evidence"].get("match_key") == localpart
     ] == []

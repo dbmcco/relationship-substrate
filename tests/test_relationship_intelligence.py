@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import uuid4
 
+import psycopg
 import pytest
 
 from relationship_substrate.contracts import SourceEventIn, SourcePosture
@@ -11,6 +13,7 @@ from relationship_substrate.materialize import materialize_msgvault_corresponden
 from relationship_substrate.relationship_intelligence import (
     prepare_relationship_tone_tenor_analysis_packet,
     prepare_relationship_intelligence_packet,
+    propose_relationship_state_live,
     persist_relationship_state,
 )
 from relationship_substrate.repositories import upsert_evidence_ref, upsert_source_event
@@ -218,3 +221,154 @@ def test_prepare_relationship_tone_tenor_analysis_packet_batches_people_with_pri
     assert person_packet["relationship_intelligence"]["evidence"][0]["id"] == evidence_ref_id
     assert len(person_packet["prior_tone_tenor_states"]) == 1
     assert person_packet["prior_tone_tenor_states"][0]["state_kind"] == "relationship_tone_tenor"
+
+
+def _write_registry(path: Path) -> None:
+    path.write_text(
+        """
+[credentials.rel_sub_openai]
+provider = "openai"
+source = "env"
+env_var = "REL_SUB_TEST_API_KEY"
+
+[provider_credential_defaults]
+openai = "rel_sub_openai"
+
+[provider_surfaces.rel_sub_openai_surface]
+provider = "openai"
+base_url = "https://models.example.test/v1"
+api_key_env = "REL_SUB_TEST_API_KEY"
+start_timeout_seconds = 12
+
+[service_credential_assignments."relationship-substrate"]
+openai = "rel_sub_openai"
+
+[model_routes."relationship_substrate.relationship_state_proposal"]
+owner = "relationship-substrate"
+surface = "rel_sub_openai_surface"
+provider = "openai"
+model = "gpt-test"
+max_tokens_default = 700
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_propose_relationship_state_live_records_proposal_and_journal(database_url, tmp_path, monkeypatch):
+    run_migrations(database_url)
+    email = f"live-model-{uuid4().hex}@example.com"
+    evidence_ref_id = _insert_correspondence_evidence(
+        database_url,
+        email=email,
+        message_id="live-1",
+        subject="Live model evidence",
+        snippet="Evidence used by the model proposal path.",
+    )
+    materialize_msgvault_correspondence(database_url)
+
+    registry_path = tmp_path / "cognition-presets.toml"
+    _write_registry(registry_path)
+    monkeypatch.setenv("REL_SUB_TEST_API_KEY", "test-secret")
+    captured: dict[str, object] = {}
+
+    def fake_post_json(*, url: str, headers: dict[str, str], payload: dict[str, object], timeout_seconds: float):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["payload"] = payload
+        captured["timeout_seconds"] = timeout_seconds
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            "{"
+                            '"state_kind":"relationship_tone_tenor",'
+                            '"summary":"Model-owned summary from live call.",'
+                            '"rationale":"Model rationale grounded in provided evidence.",'
+                            f'"evidence_refs":[{{"id":"{evidence_ref_id}"}}]'
+                            "}"
+                        )
+                    }
+                }
+            ]
+        }
+
+    result = propose_relationship_state_live(
+        database_url,
+        email=email,
+        route_key="relationship_substrate.relationship_state_proposal",
+        registry_path=str(registry_path),
+        post_json=fake_post_json,
+    )
+
+    assert result["relationship_state"]["state_kind"] == "relationship_tone_tenor"
+    assert result["relationship_state"]["evidence_refs"] == [{"id": evidence_ref_id}]
+    assert result["proposal_event"]["source_event_type"] == "relationship_state_model_proposal"
+    assert result["journal_entry"]["change_kind"] == "model_proposal_committed"
+    assert captured["url"] == "https://models.example.test/v1/chat/completions"
+    assert captured["headers"] == {"Authorization": "Bearer test-secret", "Content-Type": "application/json"}
+    assert captured["timeout_seconds"] == 12.0
+
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT source_event_type, source_posture, provenance_status, trust_role, source_payload
+                FROM relationship_substrate.source_event
+                WHERE id = %s
+                """,
+                (result["proposal_event"]["source_event_id"],),
+            )
+            proposal_row = cur.fetchone()
+            cur.execute(
+                """
+                SELECT entity_type, entity_id, change_kind, summary, evidence_refs
+                FROM relationship_substrate.state_journal_entry
+                WHERE id = %s
+                """,
+                (result["journal_entry"]["id"],),
+            )
+            journal_row = cur.fetchone()
+
+    assert proposal_row is not None
+    assert proposal_row[0] == "relationship_state_model_proposal"
+    assert proposal_row[1] == "derived_interpretation"
+    assert proposal_row[2] == "model_proposal"
+    assert proposal_row[3] == "model-authored interpreted relationship_state proposal"
+    assert proposal_row[4]["model_route"]["route_key"] == "relationship_substrate.relationship_state_proposal"
+    assert proposal_row[4]["proposal"]["summary"] == "Model-owned summary from live call."
+    assert journal_row is not None
+    assert journal_row[0] == "relationship_state"
+    assert str(journal_row[1]) == result["relationship_state"]["id"]
+    assert journal_row[2] == "model_proposal_committed"
+    assert journal_row[3] == "Model-owned summary from live call."
+    assert any(ref.get("ref_type") == "relationship_state_proposal" for ref in journal_row[4])
+
+
+def test_propose_relationship_state_live_fails_when_registry_credential_is_missing(
+    database_url,
+    tmp_path,
+    monkeypatch,
+):
+    run_migrations(database_url)
+    email = f"live-model-missing-key-{uuid4().hex}@example.com"
+    _insert_correspondence_evidence(
+        database_url,
+        email=email,
+        message_id="live-2",
+        subject="Missing credential evidence",
+        snippet="Evidence for missing credential test.",
+    )
+    materialize_msgvault_correspondence(database_url)
+    registry_path = tmp_path / "cognition-presets.toml"
+    _write_registry(registry_path)
+    monkeypatch.delenv("REL_SUB_TEST_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="missing configured credential env var"):
+        propose_relationship_state_live(
+            database_url,
+            email=email,
+            route_key="relationship_substrate.relationship_state_proposal",
+            registry_path=str(registry_path),
+        )

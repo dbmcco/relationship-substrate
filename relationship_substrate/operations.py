@@ -45,6 +45,7 @@ from relationship_substrate.repositories import (
     upsert_source_event,
 )
 from relationship_substrate.search import DEFAULT_ROLE_KEYWORDS, search_history_backed_people, search_people
+from relationship_substrate.self_identity import is_self_identity_email
 
 
 EmbedTexts = Callable[[list[str]], list[list[float]]]
@@ -99,7 +100,7 @@ def select_correspondence_seed_emails(
         if not email or email in seen:
             continue
         seen.add(email)
-        if email in self_aliases:
+        if is_self_identity_email(email, aliases=self_aliases):
             continue
         if _email_domain(email) in skipped_domains:
             continue
@@ -196,7 +197,7 @@ def _ingest_msgvault_sender_rows(
         if not email:
             stats["skipped_missing_email"] += 1
             continue
-        if email in self_aliases:
+        if is_self_identity_email(email, aliases=self_aliases):
             stats["skipped_self"] += 1
             continue
         if _email_domain(email) in skipped_domains:
