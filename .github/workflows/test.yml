@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: relationship_substrate_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" 2>/dev/null || pip install -e .
+
+      - name: Run unit tests (no DB required)
+        run: python3 -m pytest tests/test_self_identity.py tests/test_freshness.py tests/test_contracts.py tests/test_read_models.py tests/test_operations.py tests/test_source_module_contracts.py -v
+
+      - name: Run full test suite
+        env:
+          RELATIONSHIP_SUBSTRATE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/relationship_substrate_test
+        run: python3 -m pytest tests/ -v
