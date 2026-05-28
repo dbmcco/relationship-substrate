@@ -57,8 +57,8 @@ def build_relationship_operating_picture(
         generated_at = generated_at.replace(tzinfo=UTC)
     now = generated_at.isoformat()
     return {
-        "id": "relationship_operating_picture.braydon.v1",
-        "subject_ref": "person.braydon",
+        "id": "relationship_operating_picture.user.v1",
+        "subject_ref": "person.user",
         "generated_at": now,
         "system_of_record_ref": "relationship_substrate",
         "state_system_role": "state_system_interpretation",

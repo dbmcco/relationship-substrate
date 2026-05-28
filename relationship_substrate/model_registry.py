@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DEFAULT_COGNITION_PRESETS_PATH = (
-    "/Users/braydon/projects/experiments/paia-agent-runtime/config/cognition-presets.toml"
+DEFAULT_COGNITION_PRESETS_PATH = os.environ.get(
+    "COGNITION_PRESETS_PATH",
+    "",
 )
 
 

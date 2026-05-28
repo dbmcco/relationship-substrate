@@ -9,38 +9,18 @@ class SelfIdentityAccount:
     aliases: tuple[str, ...]
 
 
-BRAYDON_SELF_IDENTITY_ACCOUNTS = (
+EXAMPLE_SELF_IDENTITY_ACCOUNTS = (
     SelfIdentityAccount(
-        account_key="personal_gmail",
-        aliases=("braydonjm@gmail.com",),
+        account_key="personal",
+        aliases=("user.name@gmail.com",),
     ),
     SelfIdentityAccount(
-        account_key="intempio",
-        aliases=("braydon@intempio.com", "braydon@intempio.us"),
+        account_key="work",
+        aliases=("user@examplecorp.com",),
     ),
     SelfIdentityAccount(
-        account_key="mcco",
-        aliases=("b@mcco.us", "braydon@mcco.us"),
-    ),
-    SelfIdentityAccount(
-        account_key="aclara",
-        aliases=("b@aclara.us", "braydon@aclara.us"),
-    ),
-    SelfIdentityAccount(
-        account_key="j_mc",
-        aliases=("braydon@j-mc.org",),
-    ),
-    SelfIdentityAccount(
-        account_key="lightforgeworks",
-        aliases=("braydon@lightforgeworks.com",),
-    ),
-    SelfIdentityAccount(
-        account_key="rvibe",
-        aliases=("braydon@rvibe.com",),
-    ),
-    SelfIdentityAccount(
-        account_key="synthyra",
-        aliases=("braydon@synthyra.com",),
+        account_key="venture",
+        aliases=("user@demo.co",),
     ),
 )
 
@@ -79,7 +59,7 @@ def _self_match_candidates(email: str) -> tuple[str, ...]:
 
 def default_self_email_aliases() -> tuple[str, ...]:
     aliases: set[str] = set()
-    for account in BRAYDON_SELF_IDENTITY_ACCOUNTS:
+    for account in EXAMPLE_SELF_IDENTITY_ACCOUNTS:
         for alias in account.aliases:
             normalized = _normalize_email(alias)
             if normalized is not None:

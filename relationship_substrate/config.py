@@ -8,13 +8,9 @@ from relationship_substrate.self_identity import default_self_email_aliases
 DEFAULT_SELF_EMAIL_ALIASES = default_self_email_aliases()
 
 DEFAULT_SKIPPED_SENDER_DOMAINS = (
-    "go2impact.com",
-    "intempio.com",
-    "intempio.us",
-    "lehigh.edu",
-    "mcco.us",
-    "rvibe.com",
-    "thepracticalaccountant.com",
+    "example.com",
+    "examplecorp.com",
+    "demo.co",
 )
 
 DEFAULT_SKIPPED_SYSTEM_LOCALPARTS = (
@@ -73,15 +69,15 @@ class Settings:
     )
     msgvault_binary: str = os.environ.get(
         "MSGVAULT_BIN",
-        "/Users/braydon/.local/bin/msgvault",
+        "msgvault",
     )
     msgvault_home: str = os.environ.get(
         "MSGVAULT_HOME",
-        "/Volumes/data2/msgvault",
+        "",
     )
     msgvault_config: str = os.environ.get(
         "MSGVAULT_CONFIG",
-        "/Volumes/data2/msgvault/config.toml",
+        "",
     )
     self_email_aliases: tuple[str, ...] = _csv_env(
         "RELATIONSHIP_SUBSTRATE_SELF_EMAILS",
