@@ -46,7 +46,7 @@ Run the agent-oriented local evidence loop:
 
 ```bash
 uv run relationship-substrate eval-local \
-  --next-up-path "/Users/braydon/projects/personal/home_next_up/resources/Intempio CRM people import.xlsx" \
+  --next-up-path "/home/user/projects/personal/home_next_up/resources/Intempio CRM people import.xlsx" \
   --calendar-path "/path/to/calendar-export.json" \
   --output-dir output/eval \
   --limit 25
@@ -61,7 +61,7 @@ Run the operational substrate refresh:
 
 ```bash
 uv run relationship-substrate run-network-pipeline \
-  --next-up-path "/Users/braydon/projects/personal/home_next_up/resources" \
+  --next-up-path "/home/user/projects/personal/home_next_up/resources" \
   --output-dir output/ops \
   --sender-limit 500 \
   --correspondence-from-senders 25 \
@@ -88,7 +88,7 @@ Calendar ingestion is included when one or more `--calendar-path` JSON exports a
 Agents can also run each step independently:
 
 ```bash
-uv run relationship-substrate ingest-next-up --path "/Users/braydon/projects/personal/home_next_up/resources/Intempio CRM people import.xlsx"
+uv run relationship-substrate ingest-next-up --path "/home/user/projects/personal/home_next_up/resources/Intempio CRM people import.xlsx"
 uv run relationship-substrate materialize-exact-emails --source next_up
 uv run relationship-substrate ingest-msgvault-senders --limit 25
 uv run relationship-substrate materialize-msgvault-senders

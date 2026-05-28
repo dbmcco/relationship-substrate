@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="${RELATIONSHIP_SUBSTRATE_ROOT:-/Users/braydon/projects/experiments/relationship-substrate}"
+ROOT_DIR="${RELATIONSHIP_SUBSTRATE_ROOT:-/opt/relationship-substrate}"
 INTERVAL_SECONDS="${RELATIONSHIP_SUBSTRATE_NIGHTLY_INTERVAL_SECONDS:-43200}"
 LOG_DIR="${ROOT_DIR}/output/nightly"
 mkdir -p "$LOG_DIR"

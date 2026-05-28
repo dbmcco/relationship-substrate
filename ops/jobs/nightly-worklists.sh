@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="${RELATIONSHIP_SUBSTRATE_ROOT:-/Users/braydon/projects/experiments/relationship-substrate}"
+ROOT_DIR="${RELATIONSHIP_SUBSTRATE_ROOT:-/opt/relationship-substrate}"
 cd "$ROOT_DIR"
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"

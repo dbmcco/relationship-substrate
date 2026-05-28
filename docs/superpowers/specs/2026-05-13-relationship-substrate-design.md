@@ -2,7 +2,7 @@
 
 Date: 2026-05-13
 Status: Approved for implementation planning
-Scope: New `relationship-substrate` repo under `/Users/braydon/projects/experiments`
+Scope: New `relationship-substrate` repo under `/home/user/projects/experiments`
 
 ## 1. Purpose
 
@@ -15,7 +15,7 @@ The system should ingest real relationship evidence, preserve provenance, resolv
 Create a new repo:
 
 ```text
-/Users/braydon/projects/experiments/relationship-substrate
+/opt/relationship-substrate
 ```
 
 This repo owns:

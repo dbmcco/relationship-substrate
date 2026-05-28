@@ -26,7 +26,7 @@ inspect, and change them without relying on hidden machine scheduler state.
 
 Defaults:
 
-- next_up seed: `/Users/braydon/projects/personal/home_next_up/resources/people.xlsx`
+- next_up seed: `/data/contacts.xlsx`
 - calendar exports:
   - `output/ops/calendar-mcco-20180101-20260514.json`
   - `output/ops/calendar-intempio-20180101-20260514.json`

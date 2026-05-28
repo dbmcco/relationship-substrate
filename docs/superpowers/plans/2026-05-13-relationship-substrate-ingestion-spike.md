@@ -62,7 +62,7 @@ def test_default_settings_are_local_and_read_only_for_msgvault():
     assert settings.database_url == "postgresql://localhost:5432/relationship_substrate"
     assert settings.msgvault_home == "/Volumes/data2/msgvault"
     assert settings.msgvault_config == "/Volumes/data2/msgvault/config.toml"
-    assert settings.msgvault_binary == "/Users/braydon/.local/bin/msgvault"
+    assert settings.msgvault_binary == "msgvault"
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -129,7 +129,7 @@ class Settings:
     )
     msgvault_binary: str = os.environ.get(
         "MSGVAULT_BIN",
-        "/Users/braydon/.local/bin/msgvault",
+        "msgvault",
     )
     msgvault_home: str = os.environ.get(
         "MSGVAULT_HOME",
@@ -738,7 +738,7 @@ def test_sender_query_command_uses_msgvault_read_only_cli():
     command = adapter.build_query_command("SELECT * FROM v_senders LIMIT 1")
 
     assert command[:5] == [
-        "/Users/braydon/.local/bin/msgvault",
+        "msgvault",
         "--home",
         "/Volumes/data2/msgvault",
         "--config",
@@ -1218,8 +1218,8 @@ from typing import Any
 def build_relationship_operating_picture(rows: list[dict[str, Any]]) -> dict[str, Any]:
     now = datetime.now(UTC).isoformat()
     return {
-        "id": "relationship_operating_picture.braydon.v1",
-        "subject_ref": "person.braydon",
+        "id": "relationship_operating_picture.acme_user.v1",
+        "subject_ref": "person.acme_user",
         "generated_at": now,
         "system_of_record_ref": "relationship_substrate",
         "state_system_role": "state_system_interpretation",
