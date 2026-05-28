@@ -32,15 +32,15 @@ def _delete_sender_events(database_url, *emails: str) -> None:
 
 def test_ingest_msgvault_sender_rows_filters_self_aliases(database_url):
     run_migrations(database_url)
-    _delete_sender_events(database_url, "braydon@intempio.com", "external@example.com")
+    _delete_sender_events(database_url, "user@examplecorp.com", "external@example.com")
 
     stats = ingest_msgvault_sender_rows(
         database_url,
         [
-            {"email": "braydon@intempio.com", "message_count": 11721},
+            {"email": "user@examplecorp.com", "message_count": 11721},
             {"email": "external@example.com", "message_count": 2600},
         ],
-        self_aliases={"braydon@intempio.com"},
+        self_aliases={"user@examplecorp.com"},
         skipped_domains=set(),
     )
 
@@ -62,7 +62,7 @@ def test_ingest_msgvault_sender_rows_filters_self_aliases(database_url):
                 FROM relationship_substrate.source_event
                 WHERE source_name = 'msgvault'
                 AND source_event_type = 'sender_profile'
-                AND source_event_key IN ('msgvault:sender:braydon@intempio.com', 'msgvault:sender:external@example.com')
+                AND source_event_key IN ('msgvault:sender:user@examplecorp.com', 'msgvault:sender:external@example.com')
                 ORDER BY source_event_key
                 """
             )
@@ -75,19 +75,19 @@ def test_ingest_msgvault_sender_rows_filters_self_alias_variants(database_url):
     run_migrations(database_url)
     _delete_sender_events(
         database_url,
-        "braydonjm+history@gmail.com",
-        "braydon.jm@gmail.com",
+        "user.name+history@gmail.com",
+        "user.name@gmail.com",
         "external@example.com",
     )
 
     stats = ingest_msgvault_sender_rows(
         database_url,
         [
-            {"email": "braydonjm+history@gmail.com", "message_count": 11721},
-            {"email": "braydon.jm@gmail.com", "message_count": 930},
+            {"email": "user.name+history@gmail.com", "message_count": 11721},
+            {"email": "user.name@gmail.com", "message_count": 930},
             {"email": "external@example.com", "message_count": 2600},
         ],
-        self_aliases={"braydonjm@gmail.com"},
+        self_aliases={"user@gmail.com"},
         skipped_domains=set(),
     )
 
@@ -254,7 +254,7 @@ def test_materialize_msgvault_correspondence_updates_edge_dates_and_counts(datab
             "id": 2,
             "relationship_email": email,
             "relationship_direction": "to_contact",
-            "from_email": "braydon@example.com",
+            "from_email": "user@example.com",
             "from_name": "Braydon",
             "sent_at": "2024-02-03T00:00:00Z",
             "subject": "Outbound",

@@ -11,9 +11,10 @@ def test_default_settings_are_local_and_read_only_for_msgvault():
     settings = Settings()
 
     assert settings.database_url == "postgresql://localhost:5432/relationship_substrate"
-    assert settings.msgvault_home == "/Volumes/data2/msgvault"
-    assert settings.msgvault_config == "/Volumes/data2/msgvault/config.toml"
-    assert settings.msgvault_binary == "/Users/braydon/.local/bin/msgvault"
+    assert settings.msgvault_binary == "msgvault"
+    # msgvault_home and msgvault_config are env-var driven; just verify they are strings
+    assert isinstance(settings.msgvault_home, str)
+    assert isinstance(settings.msgvault_config, str)
 
 
 def test_next_up_source_event_keeps_unknown_upstream():

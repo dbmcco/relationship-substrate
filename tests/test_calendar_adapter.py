@@ -16,7 +16,7 @@ def test_calendar_json_events_preserve_gws_event_payload(tmp_path: Path):
               "start": {"dateTime": "2026-05-01T15:00:00-04:00"},
               "end": {"dateTime": "2026-05-01T15:30:00-04:00"},
               "attendees": [
-                {"email": "braydon@example.com", "self": true},
+                {"email": "user@example.com", "self": true},
                 {"email": "Jane@Example.com", "displayName": "Jane Doe"}
               ]
             }

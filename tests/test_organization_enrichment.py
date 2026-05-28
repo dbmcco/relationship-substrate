@@ -209,7 +209,7 @@ def test_history_backed_organization_worklist_ranks_companies_by_direct_history(
                 "summary": "MedHistory planning",
                 "start": {"dateTime": "2026-05-01T12:00:00Z"},
                 "attendees": [
-                    {"email": "braydon@intempio.com", "self": True},
+                    {"email": "user@examplecorp.com", "self": True},
                     {"email": f"bob@{domain}", "displayName": "Bob History"},
                 ],
             },
@@ -220,7 +220,7 @@ def test_history_backed_organization_worklist_ranks_companies_by_direct_history(
     )
     materialize_calendar_events(
         database_url,
-        self_aliases={"braydon@intempio.com"},
+        self_aliases={"user@examplecorp.com"},
         skipped_domains={"intempio.com"},
     )
 

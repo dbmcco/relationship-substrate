@@ -43,7 +43,7 @@ def test_materialize_calendar_events_creates_attendee_edges_and_skips_self_and_d
         database_url,
         _calendar_event(
             attendees=[
-                {"email": "braydon@example.com", "self": True},
+                {"email": "user@example.com", "self": True},
                 {"email": f"{localpart}@example.com", "displayName": "Jane Doe"},
                 {"email": "team@intempio.com", "displayName": "Internal Team"},
             ],
@@ -53,7 +53,7 @@ def test_materialize_calendar_events_creates_attendee_edges_and_skips_self_and_d
 
     stats = materialize_calendar_events(
         database_url,
-        self_aliases={"braydon@example.com"},
+        self_aliases={"user@example.com"},
         skipped_domains={"intempio.com"},
     )
 
@@ -124,8 +124,8 @@ def test_materialize_calendar_events_skips_self_alias_variants(database_url):
         database_url,
         _calendar_event(
             attendees=[
-                {"email": "braydonjm+calendar@gmail.com"},
-                {"email": "braydon.jm@gmail.com"},
+                {"email": "user.name+calendar@gmail.com"},
+                {"email": "user.name@gmail.com"},
                 {"email": f"{localpart}@example.com", "displayName": "Sam Example"},
             ],
             event_id=f"event-{localpart}",
@@ -134,7 +134,7 @@ def test_materialize_calendar_events_skips_self_alias_variants(database_url):
 
     stats = materialize_calendar_events(
         database_url,
-        self_aliases={"braydonjm@gmail.com"},
+        self_aliases={"user@gmail.com"},
         skipped_domains=set(),
     )
 

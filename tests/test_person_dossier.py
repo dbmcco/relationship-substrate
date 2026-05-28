@@ -42,7 +42,7 @@ def test_get_person_dossier_returns_evidence_interactions_and_candidates(databas
             "summary": "Dossier review",
             "start": {"dateTime": "2026-05-05T13:00:00-04:00"},
             "attendees": [
-                {"email": "braydon@example.com", "self": True},
+                {"email": "user@example.com", "self": True},
                 {"email": email, "displayName": "Dossier Person"},
             ],
         },
@@ -60,7 +60,7 @@ def test_get_person_dossier_returns_evidence_interactions_and_candidates(databas
     )
     materialize_calendar_events(
         database_url,
-        self_aliases={"braydon@example.com"},
+        self_aliases={"user@example.com"},
         skipped_domains=set(),
     )
     _insert_person(database_url, name="Dossier Person", email=f"{localpart}@other.example")

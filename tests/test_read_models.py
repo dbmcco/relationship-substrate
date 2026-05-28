@@ -32,7 +32,7 @@ def test_export_operating_picture_cli_uses_db_backed_rows_by_default(capsys, mon
         called["database_url"] = database_url
         called["limit"] = limit
         return {
-            "id": "relationship_operating_picture.braydon.v1",
+            "id": "relationship_operating_picture.user.v1",
             "relationships": [
                 {
                     "id": "relationship.person-1",
@@ -62,7 +62,7 @@ def test_export_operating_picture_cli_uses_db_backed_rows_by_default(capsys, mon
     assert main() == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["id"] == "relationship_operating_picture.braydon.v1"
+    assert payload["id"] == "relationship_operating_picture.user.v1"
     assert payload["relationships"][0]["metadata"]["provenance_status"] == "msgvault_message"
     assert payload["relationships"][0]["metadata"]["unresolved_identity_candidates"] == 2
     assert called == {

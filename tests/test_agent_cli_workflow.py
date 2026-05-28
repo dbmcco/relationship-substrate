@@ -131,7 +131,7 @@ def test_agent_cli_eval_local_can_include_calendar_json(database_url, tmp_path, 
                         "summary": "Eval calendar event",
                         "start": {"dateTime": "2026-05-03T10:00:00-04:00"},
                         "attendees": [
-                            {"email": "braydon@example.com", "self": True},
+                            {"email": "user@example.com", "self": True},
                             {"email": email, "displayName": "Eval Calendar"},
                         ],
                     }
@@ -273,7 +273,7 @@ def test_agent_cli_ingests_and_materializes_calendar_json(database_url, tmp_path
                         "summary": "Calendar CLI smoke",
                         "start": {"dateTime": "2026-05-02T10:00:00-04:00"},
                         "attendees": [
-                            {"email": "braydon@example.com", "self": True},
+                            {"email": "user@example.com", "self": True},
                             {"email": f"{localpart}@example.com", "displayName": "Calendar Person"},
                         ],
                     }
@@ -395,7 +395,7 @@ def test_agent_cli_shows_person_dossier(database_url, tmp_path, monkeypatch, cap
                         "summary": "CLI dossier meeting",
                         "start": {"dateTime": "2026-05-06T11:00:00-04:00"},
                         "attendees": [
-                            {"email": "braydon@example.com", "self": True},
+                            {"email": "user@example.com", "self": True},
                             {"email": email, "displayName": "CLI Dossier"},
                         ],
                     }

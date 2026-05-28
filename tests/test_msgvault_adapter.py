@@ -30,13 +30,9 @@ def test_sender_command_uses_supported_msgvault_analytics_cli():
 
     command = adapter.build_sender_command(10)
 
-    assert command[:5] == [
-        "/Users/braydon/.local/bin/msgvault",
-        "--home",
-        "/Volumes/data2/msgvault",
-        "--config",
-        "/Volumes/data2/msgvault/config.toml",
-    ]
+    assert command[0] == "msgvault"
+    assert command[1] == "--home"
+    assert command[3] == "--config"
     assert command[-4:] == ["list-senders", "--json", "--limit", "10"]
 
 
@@ -150,7 +146,7 @@ def test_correspondence_messages_deduplicates_from_and_to_results(monkeypatch):
             },
             {
                 "id": 2,
-                "from_email": "braydon@example.com",
+                "from_email": "user@example.com",
                 "from_name": "Braydon",
                 "sent_at": "2024-01-03T00:00:00Z",
                 "subject": "Outbound",

@@ -23,7 +23,7 @@ from relationship_substrate.repositories import upsert_evidence_ref, upsert_sour
 
 def test_select_correspondence_seed_emails_applies_msgvault_skip_rules():
     rows = [
-        {"email": "braydon@intempio.com", "message_count": 1000},
+        {"email": "user@examplecorp.com", "message_count": 1000},
         {"email": "Anne@Intempio.com", "message_count": 900},
         {"email": "events@example.com", "message_count": 800},
         {"email": "groups-noreply@linkedin.com", "message_count": 750},
@@ -36,7 +36,7 @@ def test_select_correspondence_seed_emails_applies_msgvault_skip_rules():
     assert select_correspondence_seed_emails(
         rows,
         limit=2,
-        self_aliases={"braydon@intempio.com"},
+        self_aliases={"user@examplecorp.com"},
         skipped_domains={"intempio.com"},
         skipped_system_localparts={"events"},
         skipped_system_prefixes={"calendar-notification", "groups-noreply"},
@@ -45,15 +45,15 @@ def test_select_correspondence_seed_emails_applies_msgvault_skip_rules():
 
 def test_select_correspondence_seed_emails_skips_self_alias_variants():
     rows = [
-        {"email": "braydonjm+events@gmail.com", "message_count": 1000},
-        {"email": "braydon.jm@gmail.com", "message_count": 950},
+        {"email": "user.name+events@gmail.com", "message_count": 1000},
+        {"email": "user.name@gmail.com", "message_count": 950},
         {"email": "partner@example.com", "message_count": 900},
     ]
 
     assert select_correspondence_seed_emails(
         rows,
         limit=5,
-        self_aliases={"braydonjm@gmail.com"},
+        self_aliases={"username@gmail.com"},
         skipped_domains=set(),
         skipped_system_localparts=set(),
         skipped_system_prefixes=set(),
