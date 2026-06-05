@@ -1,160 +1,409 @@
-# relationship-substrate
+<p align="center">
+  <img src="docs/hero.png" alt="Relationship Substrate — evidence-backed relationship intelligence" width="100%">
+</p>
 
-Relationship Substrate is a Python/Postgres/pgvector substrate for evidence-backed relationship intelligence.
+<h1 align="center">Relationship Substrate</h1>
 
-The first artifact is the approved design spec:
+<p align="center">
+  <strong>Evidence-first relationship intelligence for people who work with people.</strong>
+</p>
 
-- [Relationship Substrate North Star](docs/NORTH_STAR.md)
-- [2026-05-13 Relationship Substrate Design](docs/superpowers/specs/2026-05-13-relationship-substrate-design.md)
+<p align="center">
+  A Python/Postgres/pgvector substrate that ingests real relationship evidence,<br>
+  preserves provenance, resolves identities, and produces honest network intelligence.
+</p>
 
-The repo starts as a design-first CLI/library substrate. It is not a Graph CRM profile and not a web app. Its first implementation milestone proves ingestion, provenance, identity resolution, replay, and interpreted relationship state against source evidence.
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#why">Why This Exists</a> ·
+  <a href="#how-it-works">How It Works</a> ·
+  <a href="#cli-reference">CLI Reference</a> ·
+  <a href="#for-agents">For Agents</a> ·
+  <a href="#architecture">Architecture</a>
+</p>
 
-## Local Development
+---
 
-Install dependencies:
+## Why
+
+Most "relationship intelligence" tools have the same structural problem: **they confuse contact data with relationship truth.**
+
+Your CRM says you know 500 people. Your inbox says you've exchanged emails with 200 of them. Your calendar says you've met 50 of those in the last year. The gap between "in my contacts" and "I have an active, evidence-backed relationship with this person" is where all the value — and all the danger — lives.
+
+Existing tools paper over this gap in three ways:
+
+1. **CRM-driven optimism** — everyone in the database is a "contact" regardless of evidence
+2. **Activity-driven noise** — every email exchange counts equally, no matter how transactional
+3. **AI-driven hallucination** — LLMs infer relationship warmth from sparse signals and present it as insight
+
+Relationship Substrate takes a different approach: **evidence first, interpretation second, action only with provenance.**
+
+It preserves raw source evidence before it materializes canonical records. It exposes uncertainty instead of hiding it. Recommendations are always traceable to evidence, assumptions, and review state. The highest bar is trust: the system is valuable because it is careful, not because it sounds confident.
+
+## What It Does
+
+Relationship Substrate gives you:
+
+- **An evidence ledger** — every fact about a person, organization, or interaction is traceable to a source event with posture and provenance
+- **A canonical network model** — people, organizations, affiliations, contact channels, and interactions, materialized from source evidence
+- **Identity resolution** — candidates are surfaced for review, not auto-merged
+- **A relationship operating picture** — who is in your network, how strong the evidence is, and how fresh it is
+- **Goal-conditioned search** — find people matching a goal (semantic + structured), ranked by evidence strength
+- **Model-mediated interpretation** — relationship tone analysis and outreach preparation are model proposals, not hidden heuristics
+- **Subject notes** — human/agent corrections layered onto canonical records, never promoted to facts without a governed path
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.11+
+- PostgreSQL with pgvector extension
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+
+### Install
 
 ```bash
+git clone https://github.com/dbmcco/relationship-substrate.git
+cd relationship-substrate
 uv sync
 ```
 
-Create local databases:
+### Set Up Database
 
 ```bash
 psql -d postgres -c "CREATE DATABASE relationship_substrate;"
-psql -d postgres -c "CREATE DATABASE relationship_substrate_test;"
+psql -d relationship_substrate -c "CREATE EXTENSION IF NOT EXISTS vector;"
+relationship-substrate migrate
 ```
 
-Run migrations:
+### Configure
+
+Set environment variables for your deployment:
 
 ```bash
-uv run relationship-substrate migrate
+export RELATIONSHIP_SUBSTRATE_DATABASE_URL="postgresql://localhost:5432/relationship_substrate"
+export RELATIONSHIP_SUBSTRATE_SELF_EMAILS="you@example.com,you@yourcompany.com"
 ```
 
-Run tests:
+See [Configuration](#configuration) for all options.
+
+### Run the Pipeline
 
 ```bash
-RELATIONSHIP_SUBSTRATE_TEST_DATABASE_URL=postgresql://localhost:5432/relationship_substrate_test uv run pytest
+# Ingest contacts from a curated spreadsheet
+relationship-substrate ingest-next-up --path contacts.xlsx
+
+# Ingest email sender profiles from msgvault
+relationship-substrate ingest-msgvault-senders --limit 50
+
+# Materialize evidence into canonical records
+relationship-substrate materialize-exact-emails --source next_up
+relationship-substrate materialize-msgvault-senders
+
+# Generate identity candidates for review
+relationship-substrate generate-identity-candidates
+
+# Export the operating picture
+relationship-substrate export-operating-picture --from-db --limit 25
 ```
 
-Profile msgvault sender candidates:
+### Run Tests
 
 ```bash
-uv run relationship-substrate profile-msgvault --kind both --limit 25
+pytest
 ```
 
-Run the agent-oriented local evidence loop:
+## How It Works
 
-```bash
-uv run relationship-substrate eval-local \
-  --next-up-path "/home/user/projects/personal/home_next_up/resources/Intempio CRM people import.xlsx" \
-  --calendar-path "/path/to/calendar-export.json" \
-  --output-dir output/eval \
-  --limit 25
+### Evidence Flow
+
+```
+source data (email, calendar, spreadsheets, exports)
+  → ingestion run
+  → source events with posture and provenance
+  → canonical network materialization (people, orgs, interactions)
+  → bounded evidence packages for model review
+  → model proposals (tone, outreach — never auto-committed)
+  → operating picture, search, exports
 ```
 
-This writes:
+### Source Posture
 
-- `output/eval/eval_report.json`
-- `output/eval/relationship_operating_picture.json`
+Every piece of evidence carries a posture tag that determines how much trust it gets:
 
-Run the operational substrate refresh:
+| Posture | Meaning | Example |
+|---|---|---|
+| `direct_interaction` | First-party interaction evidence | Email exchange, calendar meeting |
+| `curated_export` | Human-curated contact data | CRM export, spreadsheet |
+| `enrichment` | External data enrichment | Company research, LinkedIn |
+| `derived_interpretation` | Model-generated interpretation | Tone analysis, relationship summary |
+
+Curated exports are identity/context seeds unless corroborated by direct interaction evidence. Enrichment is never treated as relationship evidence.
+
+### Freshness
+
+Freshness is mechanical, not a relationship-health score:
+
+| State | Last Interaction |
+|---|---|
+| `recent` | 0–30 days |
+| `active` | 31–120 days |
+| `stale` | 121–365 days |
+| `dormant` | 366+ days |
+| `unknown` | No interaction materialized |
+
+### Identity Resolution
+
+Identity candidates are review suggestions, not auto-merges. The system detects repeated non-generic email localparts across domains, suppresses role accounts (`info@`, `events@`, `hello@`), and surfaces open candidates for human review. Accepted/rejected/superseded decisions prevent the same pair from regenerating.
+
+## CLI Reference
+
+### Ingestion
 
 ```bash
-uv run relationship-substrate run-network-pipeline \
-  --next-up-path "/home/user/projects/personal/home_next_up/resources" \
+relationship-substrate ingest-next-up --path contacts.xlsx
+relationship-substrate ingest-msgvault-senders --limit 50
+relationship-substrate ingest-calendar --path calendar-export.json
+relationship-substrate ingest-msgvault-correspondence --sender someone@example.com --limit 25
+```
+
+### Materialization
+
+```bash
+relationship-substrate materialize-exact-emails --source next_up
+relationship-substrate materialize-msgvault-senders
+relationship-substrate materialize-calendar-events
+relationship-substrate materialize-msgvault-correspondence
+```
+
+### Identity
+
+```bash
+relationship-substrate generate-identity-candidates
+relationship-substrate list-identity-candidates --status candidate --limit 25
+relationship-substrate resolve-identity-candidate --id <id> --status rejected --note "duplicate"
+```
+
+### Search & Discovery
+
+```bash
+# Search by role keywords
+relationship-substrate search-people --role-keywords "consultant,advisor,strategy" --limit 10
+
+# Semantic search with local embeddings
+relationship-substrate search-people --semantic-provider ollama \
+  --embedding-model mxbai-embed-large:latest \
+  --semantic-query "healthcare strategy consultants" \
+  --sort semantic --limit 10
+
+# History-backed search (email/calendar evidence + org enrichment)
+relationship-substrate search-history-backed-people \
+  --actual-employee-count-min 10 --actual-employee-count-max 20 --limit 10
+```
+
+### Operating Picture
+
+```bash
+relationship-substrate export-operating-picture --from-db --limit 25
+relationship-substrate show-person --email someone@example.com
+```
+
+### Notes & Corrections
+
+```bash
+relationship-substrate record-subject-note \
+  --subject-type person --subject someone@example.com \
+  --kind context_fit --applies-to outreach_screening \
+  --note "Not a fit for current search context."
+relationship-substrate list-subject-notes --subject-type person --subject someone@example.com
+```
+
+### Model-Mediated Analysis
+
+```bash
+# Prepare evidence packet for relationship tone analysis
+relationship-substrate prepare-relationship-tone-analysis \
+  --email someone@example.com --evidence-limit 10
+
+# Prepare outreach proposal
+relationship-substrate prepare-history-backed-outreach-proposal \
+  --actual-employee-count-min 10 --actual-employee-count-max 20 --limit 5
+```
+
+### Organization Enrichment
+
+```bash
+relationship-substrate upsert-organization-enrichment \
+  --company "ExampleCorp" --company-type consulting_firm \
+  --employee-count-label "11-50" --source-name manual_research
+
+relationship-substrate export-organization-enrichment-worklist --limit 50
+relationship-substrate export-history-backed-organization-worklist --limit 50
+relationship-substrate import-organization-enrichments --path enrichment.json
+```
+
+### Embeddings
+
+```bash
+relationship-substrate embed-curated-contacts \
+  --provider ollama --model mxbai-embed-large:latest --limit 250
+```
+
+## Configuration
+
+| Environment Variable | Default | Description |
+|---|---|---|
+| `RELATIONSHIP_SUBSTRATE_DATABASE_URL` | `postgresql://localhost:5432/relationship_substrate` | PostgreSQL connection string |
+| `RELATIONSHIP_SUBSTRATE_SELF_EMAILS` | (from identity accounts) | Comma-separated self email aliases |
+| `RELATIONSHIP_SUBSTRATE_SKIPPED_SENDER_DOMAINS` | (built-in list) | Domains to skip during sender ingestion |
+| `RELATIONSHIP_SUBSTRATE_SKIPPED_SYSTEM_LOCALPARTS` | (built-in list) | Local parts to skip (`info`, `events`, etc.) |
+| `RELATIONSHIP_SUBSTRATE_SKIPPED_SYSTEM_PREFIXES` | (built-in list) | Prefixes to skip (`noreply`, `digest`, etc.) |
+| `MSGVAULT_BIN` | `msgvault` | Path to msgvault binary |
+| `MSGVAULT_HOME` | (empty) | Path to msgvault home directory |
+| `MSGVAULT_CONFIG` | (empty) | Path to msgvault config file |
+| `COGNITION_PRESETS_PATH` | (empty) | Path to model route registry |
+
+## For Agents
+
+This section describes the machine-usable interface for AI agents interacting with Relationship Substrate.
+
+### Agent Context
+
+Relationship Substrate is a **source module** that owns relationship records and exposes typed read/correction surfaces. It is designed to be called by agents, not by humans clicking through screens.
+
+### Record Kinds
+
+The farmable public record kinds are:
+
+- `person` — canonical person record with provenance and evidence refs
+- `organization` — canonical organization record with provenance and evidence refs
+- `affiliation` — person-to-organization link with role/title and provenance
+- `interaction` — materialized relationship interaction backed by source evidence
+- `subject_note` — source-owned contextual correction attached to a person or organization
+
+Pydantic contracts live in `relationship_substrate.contracts`. The open-source-safe fixture is at `examples/source_module/relationship_substrate_records.json`.
+
+### Tool Surfaces
+
+| Surface | Purpose |
+|---|---|
+| `tool.relationship_substrate.operating_picture` | Current relationship operating picture |
+| `tool.relationship_substrate.search_small_consulting_firm_contacts` | Goal-conditioned contact search |
+| `tool.relationship_substrate.search_history_backed_people` | Email/calendar evidence-backed people search |
+| `tool.relationship_substrate.list_subject_notes` | Read contextual corrections |
+| `tool.relationship_substrate.record_subject_note` | Write a source-owned correction |
+
+### Agent Rules
+
+1. **Subject notes are contextual evidence, not canonical facts.** Apply them to demote or explain candidates. Do not hide matching records solely because a note exists. Do not promote notes into canonical person/organization facts without a governed promotion path.
+
+2. **Identity candidates are review suggestions, not merges.** Do not auto-accept candidates. Surface them for review with the supporting evidence.
+
+3. **Model proposals must cite evidence.** Relationship tone analysis and outreach proposals must reference specific source events. Code validates cited evidence refs before persisting model output.
+
+4. **Enrichment is not relationship evidence.** Company size, type, and research context are organizational facts with their own provenance. They do not constitute relationship warmth or interaction history.
+
+5. **Freshness is mechanical.** `freshness_state` is derived from interaction dates, not relationship quality. A `dormant` label means "no recent interaction evidence," not "this relationship is bad."
+
+### Pipeline Operations
+
+Agents can run each pipeline step independently or use `run-network-pipeline` for a full refresh:
+
+```bash
+relationship-substrate run-network-pipeline \
+  --next-up-path /data/contacts/ \
   --output-dir output/ops \
   --sender-limit 500 \
   --correspondence-from-senders 25 \
-  --correspondence-message-limit 50 \
   --embed-provider ollama \
   --embedding-model mxbai-embed-large:latest \
-  --embed-limit 500 \
   --organization-worklist-limit 100 \
   --north-star-limit 25
 ```
 
-This creates the configured Postgres database if needed, runs migrations, ingests the whole Next Up resources directory, profiles msgvault senders/domains, seeds correspondence ingestion from the top non-self/non-excluded senders, materializes email/calendar evidence, generates identity candidates, embeds curated contacts when not skipped, exports the history-backed organization enrichment worklist, and writes the current North Star query artifact. Each run writes timestamped artifacts under `output/ops/<run-id>/`, including:
+Each run writes timestamped artifacts: pipeline report, sender profiles, correspondence ingestions, organization worklist, operating picture, and North Star query.
 
-- `pipeline_report.json`
-- `msgvault_profile.json`
-- `msgvault_correspondence_ingestions.json`
-- `organization_enrichment_worklist.json`
-- `north_star_query.json`
-- `history_backed_north_star_query.json`
-- `operating_picture.json`
+### Agent-Readable Output Format
 
-Calendar ingestion is included when one or more `--calendar-path` JSON exports are supplied. Use `--skip-embeddings` for a faster structural refresh before starting Ollama-backed semantic search.
+All CLI commands emit JSON to stdout. Key output shapes:
 
-Agents can also run each step independently:
-
-```bash
-uv run relationship-substrate ingest-next-up --path "/home/user/projects/personal/home_next_up/resources/Intempio CRM people import.xlsx"
-uv run relationship-substrate materialize-exact-emails --source next_up
-uv run relationship-substrate ingest-msgvault-senders --limit 25
-uv run relationship-substrate materialize-msgvault-senders
-uv run relationship-substrate ingest-calendar --path "/path/to/calendar-export.json"
-uv run relationship-substrate materialize-calendar-events
-uv run relationship-substrate generate-identity-candidates
-uv run relationship-substrate list-identity-candidates --status candidate --limit 25
-uv run relationship-substrate show-identity-candidate --id "<candidate-id>"
-uv run relationship-substrate resolve-identity-candidate --id "<candidate-id>" --status rejected --note "review note"
-uv run relationship-substrate show-person --email "person@example.com"
-uv run relationship-substrate record-subject-note --subject-type person --subject "person@example.com" --kind context_fit --applies-to small_consulting_firm_discovery --note "Not a good fit for this search context."
-uv run relationship-substrate list-subject-notes --subject-type person --subject "person@example.com"
-uv run relationship-substrate prepare-relationship-tone-analysis --email "person@example.com" --evidence-limit 10 --prior-state-limit 3
-uv run relationship-substrate prepare-history-backed-outreach-proposal --actual-employee-count-min 10 --actual-employee-count-max 20 --consultant-count-min 10 --consultant-count-max 20 --limit 5 --research-context /path/to/current-research.json --evidence-limit 5
-uv run relationship-substrate embed-curated-contacts --provider ollama --model mxbai-embed-large:latest --limit 250
-uv run relationship-substrate upsert-organization-enrichment --company "AbbVie" --company-type public_pharmaceutical_company --employee-count-label enterprise --source-name manual_research --source-url "https://www.abbvie.com/"
-uv run relationship-substrate export-organization-enrichment-worklist --limit 50
-uv run relationship-substrate export-history-backed-organization-worklist --limit 50
-uv run relationship-substrate import-organization-enrichments --path /path/to/reviewed-company-enrichment.json
-uv run relationship-substrate search-people --role-keywords "consultant,advisor,principal,strategy,operations,supply,medical communications,commercial" --known-people-at-company-min 10 --known-people-at-company-max 15 --limit 10
-uv run relationship-substrate search-people --role-keywords "" --semantic-provider ollama --embedding-model mxbai-embed-large:latest --semantic-query "consultants or advisory firms in medcomms, pharma operations, supply chain, or business consulting" --known-people-at-company-min 10 --known-people-at-company-max 15 --sort semantic --limit 10
-uv run relationship-substrate search-people --role-keywords "" --semantic-provider ollama --embedding-model mxbai-embed-large:latest --semantic-query "consulting background in medcoms medical communications agency" --actual-employee-count-min 10 --actual-employee-count-max 20 --sort semantic --limit 5
-uv run relationship-substrate search-people --role-keywords "" --semantic-provider ollama --embedding-model mxbai-embed-large:latest --semantic-query "consulting background in medcoms medical communications healthcare life sciences strategy consultancy" --consultant-count-min 10 --consultant-count-max 20 --sort semantic --limit 5
-uv run relationship-substrate search-history-backed-people --actual-employee-count-min 10 --actual-employee-count-max 20 --consultant-count-min 10 --consultant-count-max 20 --limit 10
-uv run relationship-substrate export-operating-picture --from-db --limit 25
+```json
+{
+  "id": "relationship_operating_picture.user.v1",
+  "subject_ref": "person.user",
+  "relationships": [
+    {
+      "id": "relationship.<person_id>",
+      "name": "Jane Smith",
+      "relationship_state": "uninterpreted_interaction_evidence",
+      "evidence_refs": ["person:<person_id>"],
+      "metadata": {
+        "primary_email": "jane@example.com",
+        "interaction_count": 12,
+        "freshness_state": "active",
+        "days_since_last_interaction": 45
+      }
+    }
+  ]
+}
 ```
 
-Sender ingestion skips noisy internal/system senders before materialization. Exact-email materialization also skips configured domains. Defaults include Braydon's known self aliases, `go2impact.com`, `intempio.com`, `intempio.us`, `lehigh.edu`, `mcco.us`, `rvibe.com`, `thepracticalaccountant.com`, and common automated local-parts/prefixes such as `events`, `info`, `daily`, `onlinebanking`, `return`, `noreply`, `invoice`, `statement`, `digest`, `newsletter`, `ship`, `shipment`, `groups-noreply`, `calendar-notification`, `voice-noreply`, `auto-confirm`, and `ordersender`. Override with:
+## Architecture
 
-```bash
-RELATIONSHIP_SUBSTRATE_SELF_EMAILS="a@example.com,b@example.com"
-RELATIONSHIP_SUBSTRATE_SKIPPED_SENDER_DOMAINS="intempio.com,example.org"
-RELATIONSHIP_SUBSTRATE_SKIPPED_SYSTEM_LOCALPARTS="events,onlinebanking"
-RELATIONSHIP_SUBSTRATE_SKIPPED_SYSTEM_PREFIXES="noreply,invoice,statement"
+### Stack
+
+- **Python** — CLI/library substrate, not a web app
+- **PostgreSQL + pgvector** — canonical storage, identity resolution, semantic search
+- **Pydantic** — typed contracts for all record kinds
+- **Ollama** (optional) — local embeddings for semantic search (`mxbai-embed-large`)
+- **msgvault** (optional) — email archive adapter for sender/correspondence ingestion
+
+### Design Principles
+
+1. **Evidence first.** Interpretation second. Action only with provenance.
+2. **Source posture determines trust.** Direct interaction > curated export > enrichment > derived interpretation.
+3. **Identity candidates are reviewable.** No auto-merges.
+4. **Model interpretation is auditable.** Tone analysis and outreach proposals cite evidence before persisting.
+5. **Freshness is mechanical.** Not a relationship-health score.
+6. **CLI-first.** Agent and CLI operation before UI polish.
+7. **Substrate independence.** Not tied to any CRM, graph database, or UI framework.
+
+### Module Layout
+
+```
+relationship_substrate/
+├── adapters/          # Source ingestion adapters (msgvault, calendar, next_up)
+├── cli.py             # Agent-oriented CLI surface
+├── config.py          # Environment-driven configuration
+├── contracts.py       # Pydantic record types (Person, Organization, etc.)
+├── db.py              # Database connection and migration runner
+├── embeddings.py      # Local embedding generation (Ollama/OpenAI/hash)
+├── freshness.py       # Mechanical freshness buckets
+├── identity.py        # Identity candidate generation and resolution
+├── materialize.py     # Source event → canonical record materialization
+├── model_registry.py  # Model route resolution from central registry
+├── network_ask.py     # North Star query execution
+├── operations.py      # Pipeline orchestration and reporting
+├── organizations.py   # Organization enrichment workflow
+├── outreach.py        # Outreach proposal preparation
+├── read_models.py     # Operating picture and dossier exports
+├── relationship_intelligence.py  # Relationship strength workers
+├── repositories.py    # Database CRUD operations
+├── search.py          # People search (keyword + semantic + structured)
+├── self_identity.py   # Self email alias configuration
+└── tone_tenor_workers.py  # Model-mediated tone analysis
 ```
 
-Export the first operating-picture shape:
+## What This Is Not
 
-```bash
-uv run relationship-substrate export-operating-picture
-```
+- Not a generic CRM
+- Not a LinkedIn clone
+- Not a black-box relationship-health scorer
+- Not a place where enrichment is treated as relationship evidence
+- Not a system that presents old imports as current truth
+- Not a UI-first app whose data model is shaped by screens
+- Not a model playground that writes untraceable state
 
-Calendar ingestion accepts JSON exports with `items`, `events`, `data`, a bare event object, or a bare list of event objects. The expected event shape matches Google Calendar/n8n-style payloads: `id`, `summary`, `start.dateTime` or `start.date`, and `attendees[].email`. Calendar materialization skips self attendees and configured internal domains, creates attendee evidence, increments relationship edges, and stores `calendar_interaction_count` in operating-picture metadata.
+## License
 
-Current eval interpretation: the CLI now proves that Next Up curated exports can be ingested and materialized with preserved provenance, msgvault sender/domain profiles can be read through the supported analytics commands, and calendar exports can be materialized into attendee interaction evidence. Msgvault sender profiles can also be materialized into aggregate `interaction` and `relationship_edge` rows, skipping known Braydon/self aliases by default. The operating picture remains conservative: direct email/calendar counts are interaction evidence, not relationship-health interpretation; rows from Next Up without matching interaction evidence remain `curated_export + unknown_upstream` identity seeds.
-
-Identity candidates are unresolved review suggestions, not merges. The current candidate pass detects repeated non-generic email localparts across domains, suppresses role accounts such as `events`, `info`, and `hello`, and surfaces open candidate counts in the DB-backed operating picture metadata. Candidate review records a decision and note in evidence metadata; accepted/rejected/superseded decisions prevent the same pair from being regenerated.
-
-Person dossiers are factual inspection views for agents. `show-person --email` returns the canonical person, contact channels, relationship edge counters, matching interactions, source events, evidence refs, and identity candidates without adding semantic relationship-health interpretation.
-
-Subject notes are explicit user/agent corrections layered onto canonical people or organizations. `record-subject-note` stores notes such as fit caveats, identity context, or relationship caveats with `source_ref`, evidence refs, metadata, and optional supersession. `list-subject-notes`, `show-person`, and history-backed search expose these as `subject_note_context`; the CLI also keeps `notes` as a transitional output alias. Agents should use subject-note context to demote or explain candidates, not to hide records or promote contextual notes into canonical profile facts. `record-person-note` and `list-person-notes` remain compatibility aliases only.
-
-Freshness is mechanical, not a relationship-health score. Operating-picture rows and person dossiers expose `freshness_state`, `days_since_last_interaction`, and `freshness_basis` from the last materialized interaction only: `recent` (0-30 days), `active` (31-120), `stale` (121-365), `dormant` (366+), or `unknown` when no interaction is materialized.
-
-Relationship tone analysis is model-owned. `prepare-relationship-tone-analysis` emits a compact packet with bounded evidence, mechanical relationship facts, prior tone/tenor states, and a model contract. Code does not classify tone, score tenor, or infer relationship health; a model proposal must cite supplied evidence refs before `persist-relationship-state` can store it.
-
-Outreach proposal prep is draft-only. `prepare-history-backed-outreach-proposal` turns the history-backed North Star search results into a compact model packet with the selected search hit, bounded relationship evidence, prior tone/tenor state, organization enrichment, and optional current research context. Code validates cited evidence and research refs but does not choose the angle, write copy, assign priority, or send messages.
-
-Network search is the first executable North Star query. `search-people` searches Next Up curated contact evidence, filters by explicit constraints, ranks by materialized relationship interaction count or embedding similarity, and returns source event provenance plus mechanical freshness. The result field `known_people_at_company_count` is not actual employer size; actual company size/type belongs in `organization_enrichment`, populated separately with `upsert-organization-enrichment` and its own provenance. Use `--known-people-at-company-*` for Braydon's known network count. Use `--actual-employee-count-*` for actual organization size; organizations without employee-count enrichment do not match actual-size filters, and broad ranges such as `11-50` do not satisfy narrower requests such as `10-20`. Use `--consultant-count-*` for separately researched consultant/team counts from company pages, employee-profile counts, or other sourced estimates. `embed-curated-contacts` populates `person.content_embedding` from curated contact context. The default provider is local Ollama at `http://localhost:11434/api/embed`; `mxbai-embed-large:latest` is the current local default. OpenAI remains available through `--provider openai` and `OPENAI_API_KEY`; `--provider hash` exists only for local smoke tests. Network search does not yet perform external recent-news research or draft outreach.
-
-History-backed people search is the operational North Star query for email/calendar-derived relationships and the backing read surface for higher-level relationship search routes. `search-history-backed-people` searches materialized msgvault/calendar people by email domain, joins those domains to reviewed `organization_enrichment`, filters by actual employee count and consultant/team count, ranks by direct interaction count, and returns `subject_note_context` when source-owned corrections exist. This is the right command for questions like: "give me five people who are consultants at consulting firms with around ten people on staff." It complements `search-people`; it does not require the person to exist in a curated Next Up spreadsheet.
-
-## Source Module Contract
-
-Relationship Substrate is intended to be farmable as a SourceModuleSpec provider/consumer. The reusable module boundary covers record kinds `person`, `organization`, `affiliation`, `interaction`, and `subject_note`. The correction write surface is `record_subject_note` / `record-subject-note` with `effect_type=source_owned_correction_write`; it writes audited relationship-context corrections inside the source module and does not authorize external side effects. See [docs/SOURCE_MODULE_SPEC.md](docs/SOURCE_MODULE_SPEC.md) and [examples/source_module/relationship_substrate_records.json](examples/source_module/relationship_substrate_records.json).
-
-Organization enrichment is a separate batch workflow. `export-organization-enrichment-worklist` lists companies from curated contacts with known-network count, sample titles, existing enrichment, and a research prompt. Agents can enrich those companies from institutional knowledge, Perplexity, or direct web research, then load reviewed facts with `import-organization-enrichments`. Imports require `company_name` and `source_name`; supported fields include `company_type`, `employee_count_min`, `employee_count_max`, `employee_count_label`, `consultant_count_estimate`, `source_url`, and `provenance_status`.
-
-History-backed organization enrichment is the operational queue. `export-history-backed-organization-worklist` groups people by email domain, connects domains to Next Up company names when available, and ranks organizations by direct msgvault/calendar interaction evidence before curated-only company counts. The output includes known people count, direct people count, email interaction count, calendar interaction count, last interaction, strongest people, sample titles, current enrichment, mechanical enrichment reasons, and a research prompt. This command is for deciding what to enrich next; it does not decide whether a company is medcoms, consulting, or a good outreach target.
+[MIT](LICENSE)
