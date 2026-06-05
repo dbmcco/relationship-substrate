@@ -358,6 +358,65 @@ All CLI commands emit JSON to stdout. Key output shapes:
 - **Ollama** (optional) — local embeddings for semantic search (`mxbai-embed-large`)
 - **msgvault** (optional) — email archive adapter for sender/correspondence ingestion
 
+### Ingestion Sources
+
+Relationship Substrate ingests relationship evidence from multiple sources. Each source has an adapter that reads raw data and produces typed source events with posture and provenance.
+
+| Source | Adapter | What it provides | Posture |
+|---|---|---|---|
+| **msgvault** | `MsgvaultAdapter` | Email sender profiles, domain aggregates, full correspondence messages (from/to/subject/date/body excerpt). Requires a running [msgvault](https://github.com/dbmcco/msgvault) daemon or CLI binary. | `direct_interaction` |
+| **Calendar exports** | `CalendarAdapter` | Google Calendar / n8n-style JSON event payloads with attendees, times, and summaries. | `direct_interaction` |
+| **Curated spreadsheets** | `NextUpAdapter` | Contact exports (XLSX/CSV) with name, email, company, title. These are identity/context seeds, not interaction evidence. | `curated_export` |
+| **Organization research** | Manual / agent-driven | Company type, employee count, consultant count. Loaded via `import-organization-enrichments`. | `enrichment` |
+
+**msgvault** is an offline email archive tool that syncs Gmail accounts to local storage and exposes sender analytics, domain profiles, and full-text search through a CLI and local HTTP API. Relationship Substrate uses it to:
+
+1. Profile top senders and domains across all synced accounts (`list-senders`, `list-domains`)
+2. Ingest correspondence messages for specific people (`search`)
+3. Extract interaction evidence (who emailed whom, when, how often)
+
+If msgvault is not available, you can still use calendar exports, curated spreadsheets, and manual organization enrichment. The email ingestion commands will simply fail with a connection error.
+
+To set up msgvault:
+
+```bash
+# Install msgvault
+msgvault sync --account you@example.com
+
+# Verify it works
+msgvault list-senders --json --limit 5
+
+# Point relationship-substrate at it
+export MSGVAULT_BIN=msgvault
+export MSGVAULT_HOME=/path/to/msgvault/data
+export MSGVAULT_CONFIG=/path/to/msgvault/config.toml
+```
+
+### Ingestion Pipeline
+
+The full pipeline runs source-by-source through these stages:
+
+```
+1. INGEST    Read raw source data → source_events table
+               (idempotent — re-running won't duplicate)
+
+2. MATERIALIZE source_events → canonical records
+               people, organizations, affiliations, interactions, relationship_edges
+               Skips self-aliases, configured domains, and system accounts
+
+3. RESOLVE   Generate identity candidates from repeated localparts across domains
+               (review suggestions, not auto-merges)
+
+4. ENRICH    Embed curated contacts with local Ollama for semantic search
+               (optional — keyword search works without embeddings)
+
+5. INTERPRET Prepare bounded evidence packages for model review
+               Relationship tone, outreach proposals
+               (model proposals only — never auto-committed)
+```
+
+Each stage can be run independently or all at once with `run-network-pipeline`.
+
 ### Design Principles
 
 1. **Evidence first.** Interpretation second. Action only with provenance.
