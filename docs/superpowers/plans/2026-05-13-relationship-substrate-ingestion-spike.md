@@ -60,8 +60,8 @@ def test_default_settings_are_local_and_read_only_for_msgvault():
     settings = Settings()
 
     assert settings.database_url == "postgresql://localhost:5432/relationship_substrate"
-    assert settings.msgvault_home == "/Volumes/data2/msgvault"
-    assert settings.msgvault_config == "/Volumes/data2/msgvault/config.toml"
+    assert settings.msgvault_home == "/var/lib/msgvault"
+    assert settings.msgvault_config == "/var/lib/msgvault/config.toml"
     assert settings.msgvault_binary == "msgvault"
 ```
 
@@ -133,11 +133,11 @@ class Settings:
     )
     msgvault_home: str = os.environ.get(
         "MSGVAULT_HOME",
-        "/Volumes/data2/msgvault",
+        "/var/lib/msgvault",
     )
     msgvault_config: str = os.environ.get(
         "MSGVAULT_CONFIG",
-        "/Volumes/data2/msgvault/config.toml",
+        "/var/lib/msgvault/config.toml",
     )
 ```
 
@@ -740,9 +740,9 @@ def test_sender_query_command_uses_msgvault_read_only_cli():
     assert command[:5] == [
         "msgvault",
         "--home",
-        "/Volumes/data2/msgvault",
+        "/var/lib/msgvault",
         "--config",
-        "/Volumes/data2/msgvault/config.toml",
+        "/var/lib/msgvault/config.toml",
     ]
     assert command[-3:] == ["query", "--format", "json"]
 ```
@@ -1398,7 +1398,7 @@ Known follow-up after this plan:
 - DB-backed top-25 operating-picture query.
 - Calendar/n8n adapter.
 - Live model proposal path through the central registry.
-- Self-identity alias model for Braydon's historical email accounts.
+- Self-identity alias model for the user's historical email accounts.
 - Domain/name identity candidates beyond exact email.
 
 ## Implementation Status (2026-05-13)

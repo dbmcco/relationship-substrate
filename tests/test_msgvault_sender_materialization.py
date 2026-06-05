@@ -104,16 +104,16 @@ def test_ingest_msgvault_sender_rows_filters_self_alias_variants(database_url):
 
 def test_ingest_msgvault_sender_rows_filters_skipped_domains(database_url):
     run_migrations(database_url)
-    _delete_sender_events(database_url, "anne@intempio.com", "external@example.com")
+    _delete_sender_events(database_url, "anne@examplecorp.com", "external@example.com")
 
     stats = ingest_msgvault_sender_rows(
         database_url,
         [
-            {"email": "anne@intempio.com", "message_count": 2600},
+            {"email": "anne@examplecorp.com", "message_count": 2600},
             {"email": "external@example.com", "message_count": 12},
         ],
         self_aliases=set(),
-        skipped_domains={"intempio.com"},
+        skipped_domains={"examplecorp.com"},
     )
 
     assert stats["events_seen"] == 2
@@ -128,7 +128,7 @@ def test_ingest_msgvault_sender_rows_filters_skipped_domains(database_url):
                 FROM relationship_substrate.source_event
                 WHERE source_name = 'msgvault'
                 AND source_event_type = 'sender_profile'
-                AND source_event_key IN ('msgvault:sender:anne@intempio.com', 'msgvault:sender:external@example.com')
+                AND source_event_key IN ('msgvault:sender:anne@examplecorp.com', 'msgvault:sender:external@example.com')
                 ORDER BY source_event_key
                 """
             )
@@ -141,7 +141,7 @@ def test_ingest_msgvault_sender_rows_filters_system_senders(database_url):
     run_migrations(database_url)
     _delete_sender_events(
         database_url,
-        "events@rvibe.com",
+        "events@demo-partner.com",
         "onlinebanking@ealerts.bankofamerica.com",
         "invoice+statements@mail.anthropic.com",
         "external@example.com",
@@ -150,7 +150,7 @@ def test_ingest_msgvault_sender_rows_filters_system_senders(database_url):
     stats = ingest_msgvault_sender_rows(
         database_url,
         [
-            {"email": "events@rvibe.com", "message_count": 561},
+            {"email": "events@demo-partner.com", "message_count": 561},
             {"email": "onlinebanking@ealerts.bankofamerica.com", "message_count": 590},
             {"email": "invoice+statements@mail.anthropic.com", "message_count": 504},
             {"email": "external@example.com", "message_count": 12},
@@ -174,7 +174,7 @@ def test_ingest_msgvault_sender_rows_filters_system_senders(database_url):
                 WHERE source_name = 'msgvault'
                 AND source_event_type = 'sender_profile'
                 AND source_event_key IN (
-                    'msgvault:sender:events@rvibe.com',
+                    'msgvault:sender:events@demo-partner.com',
                     'msgvault:sender:onlinebanking@ealerts.bankofamerica.com',
                     'msgvault:sender:invoice+statements@mail.anthropic.com',
                     'msgvault:sender:external@example.com'
@@ -189,10 +189,10 @@ def test_ingest_msgvault_sender_rows_filters_system_senders(database_url):
 
 def test_materialize_msgvault_senders_creates_relationship_edges(database_url):
     run_migrations(database_url)
-    _delete_sender_events(database_url, "anne@intempio.com")
+    _delete_sender_events(database_url, "anne@examplecorp.com")
     ingest_msgvault_sender_rows(
         database_url,
-        [{"email": "anne@intempio.com", "message_count": 2600, "total_size": 398593897}],
+        [{"email": "anne@examplecorp.com", "message_count": 2600, "total_size": 398593897}],
         self_aliases=set(),
         skipped_domains=set(),
     )
@@ -209,16 +209,16 @@ def test_materialize_msgvault_senders_creates_relationship_edges(database_url):
                 SELECT p.display_name, p.primary_email, e.interaction_count
                 FROM relationship_substrate.person p
                 JOIN relationship_substrate.relationship_edge e ON e.person_id = p.id
-                WHERE p.primary_email = 'anne@intempio.com'
+                WHERE p.primary_email = 'anne@examplecorp.com'
                 """
             )
-            assert cur.fetchone() == ("anne", "anne@intempio.com", 2600)
+            assert cur.fetchone() == ("anne", "anne@examplecorp.com", 2600)
             cur.execute(
                 """
                 SELECT interaction_type, metadata->>'aggregate'
                 FROM relationship_substrate.interaction i
                 JOIN relationship_substrate.source_event s ON s.id = i.source_event_id
-                WHERE s.source_event_key = 'msgvault:sender:anne@intempio.com'
+                WHERE s.source_event_key = 'msgvault:sender:anne@examplecorp.com'
                 """
             )
             assert cur.fetchone() == ("email_sender_profile", "true")
@@ -255,7 +255,7 @@ def test_materialize_msgvault_correspondence_updates_edge_dates_and_counts(datab
             "relationship_email": email,
             "relationship_direction": "to_contact",
             "from_email": "user@example.com",
-            "from_name": "Braydon",
+            "from_name": "Example User",
             "sent_at": "2024-02-03T00:00:00Z",
             "subject": "Outbound",
             "snippet": "reply",

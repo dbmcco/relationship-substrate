@@ -40,7 +40,7 @@ def test_get_person_dossier_returns_evidence_interactions_and_candidates(databas
         source_payload={
             "id": f"event-{localpart}",
             "summary": "Dossier review",
-            "start": {"dateTime": "2026-05-05T13:00:00-04:00"},
+            "start": {"dateTime": "2026-05-26T13:00:00-04:00"},
             "attendees": [
                 {"email": "user@example.com", "self": True},
                 {"email": email, "displayName": "Dossier Person"},

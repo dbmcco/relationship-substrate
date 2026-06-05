@@ -147,7 +147,7 @@ def test_correspondence_messages_deduplicates_from_and_to_results(monkeypatch):
             {
                 "id": 2,
                 "from_email": "user@example.com",
-                "from_name": "Braydon",
+                "from_name": "Example User",
                 "sent_at": "2024-01-03T00:00:00Z",
                 "subject": "Outbound",
                 "snippet": "reply",

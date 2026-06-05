@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Relationship Substrate exists to give Braydon a private, evidence-first understanding of his personal and professional network.
+Relationship Substrate exists to give the user a private, evidence-first understanding of his personal and professional network.
 
 It should help answer who is in the network, what evidence exists, what the relationship state appears to be, and what action is worth taking next. It must do that without turning weak, stale, or ambiguous signals into false certainty.
 
 ## Product Promise
 
-Relationship Substrate should become the trusted substrate behind Braydon's network intelligence:
+Relationship Substrate should become the trusted substrate behind the user's network intelligence:
 
 - a durable evidence ledger for people, organizations, identities, interactions, and provenance
 - a conservative canonical network model that separates facts from interpretation
@@ -32,7 +32,7 @@ The system should preserve raw source evidence before it materializes canonical 
    Email, calendar, curated exports, notes, browser-captured context, LinkedIn or other enrichment, and future sources, each with source posture and provenance.
 
 3. What is the state of the relationship?
-   Interaction history, freshness, open loops, personal/professional context, relationship health, overlap with Braydon's goals, and uncertainty. Mechanical evidence and model interpretation must remain visibly separate.
+   Interaction history, freshness, open loops, personal/professional context, relationship health, overlap with the user's goals, and uncertainty. Mechanical evidence and model interpretation must remain visibly separate.
 
 4. What should I do next?
    Agent-readable recommendations for who to talk to, why now, what context matters, what entry points are available, and what uncertainty remains.
@@ -41,9 +41,9 @@ The system should preserve raw source evidence before it materializes canonical 
 
 The first North Star workflow is goal-conditioned network search:
 
-1. Ask for people from Braydon's network matching a goal, such as "consultant-like people at companies where I know 10-15 people."
+1. Ask for people from the user's network matching a goal, such as "consultant-like people at companies where I know 10-15 people."
 2. Use embeddings for semantic matching against the goal, plus explicit structured constraints such as known-company count.
-3. Return ranked candidates with role, company, known people at that company in Braydon's substrate, separate organization size/type enrichment, semantic similarity, interaction count, freshness, and source evidence.
+3. Return ranked candidates with role, company, known people at that company in the user's substrate, separate organization size/type enrichment, semantic similarity, interaction count, freshness, and source evidence.
 4. Evaluate which candidates have the strongest relationship evidence before drafting anything.
 5. Research recent context about the selected person or organization with fresh external sources.
 6. Draft an email that cites the relationship context and current entry point without pretending enrichment is direct relationship evidence.
@@ -100,7 +100,7 @@ Relationship Substrate is not:
 
 ## Definition Of Success
 
-The substrate is succeeding when Braydon can ask:
+The substrate is succeeding when the user can ask:
 
 - Who should I reconnect with about this goal?
 - What do I know about this person and how do I know it?

@@ -12,22 +12,15 @@ from relationship_substrate.freshness import relationship_freshness
 DEFAULT_SKIPPED_ORGANIZATION_DOMAINS = {
     "aol.com",
     "gmail.com",
-    "go2impact.com",
     "hotmail.com",
     "icloud.com",
-    "intempio.com",
-    "intempio.us",
-    "lehigh.edu",
     "linkedin.com",
     "live.com",
     "me.com",
-    "mcco.us",
     "msn.com",
     "outlook.com",
     "proton.me",
     "protonmail.com",
-    "rvibe.com",
-    "thepracticalaccountant.com",
     "yahoo.com",
 }
 

@@ -46,7 +46,7 @@ Agents must apply subject notes as contextual evidence:
 
 The route-level `answer_contract_policy` name for this rule is
 `subject_note_context_demote_explain_not_hide`. Relationship Substrate fixtures
-and docs should use that exact public name so State System packages, Samantha
+and docs should use that exact public name so State System packages, agent routes
 routes, and OSS examples stay aligned.
 
 ## Tool Action Contract Names

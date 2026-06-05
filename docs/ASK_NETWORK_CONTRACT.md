@@ -14,7 +14,7 @@ Give me five people who are consultants, who are at firms that have around ten p
 
 The contract must preserve the distinction between:
 
-- actual organization size and the number of people Braydon knows at that organization
+- actual organization size and the number of people the user knows at that organization
 - direct relationship evidence and external organization research
 - mechanical facts and model-authored interpretation
 - draft outreach and approved outbound action

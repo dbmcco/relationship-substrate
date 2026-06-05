@@ -24,7 +24,7 @@ from relationship_substrate.repositories import upsert_evidence_ref, upsert_sour
 def test_select_correspondence_seed_emails_applies_msgvault_skip_rules():
     rows = [
         {"email": "user@examplecorp.com", "message_count": 1000},
-        {"email": "Anne@Intempio.com", "message_count": 900},
+        {"email": "anne@examplecorp.com", "message_count": 900},
         {"email": "events@example.com", "message_count": 800},
         {"email": "groups-noreply@linkedin.com", "message_count": 750},
         {"email": "calendar-notification@google.com", "message_count": 725},
@@ -37,7 +37,7 @@ def test_select_correspondence_seed_emails_applies_msgvault_skip_rules():
         rows,
         limit=2,
         self_aliases={"user@examplecorp.com"},
-        skipped_domains={"intempio.com"},
+        skipped_domains={"examplecorp.com"},
         skipped_system_localparts={"events"},
         skipped_system_prefixes={"calendar-notification", "groups-noreply"},
     ) == ["person@example.com", "advisor@example.org"]

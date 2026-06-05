@@ -45,7 +45,7 @@ def test_materialize_calendar_events_creates_attendee_edges_and_skips_self_and_d
             attendees=[
                 {"email": "user@example.com", "self": True},
                 {"email": f"{localpart}@example.com", "displayName": "Jane Doe"},
-                {"email": "team@intempio.com", "displayName": "Internal Team"},
+                {"email": "team@examplecorp.com", "displayName": "Internal Team"},
             ],
             event_id=f"event-{localpart}",
         ),
@@ -54,7 +54,7 @@ def test_materialize_calendar_events_creates_attendee_edges_and_skips_self_and_d
     stats = materialize_calendar_events(
         database_url,
         self_aliases={"user@example.com"},
-        skipped_domains={"intempio.com"},
+        skipped_domains={"examplecorp.com"},
     )
 
     assert stats == {

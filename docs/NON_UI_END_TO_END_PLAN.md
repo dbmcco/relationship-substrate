@@ -148,7 +148,7 @@ Every task must run:
 - a CLI smoke test when the task changes CLI behavior
 - Speedrift drift check before closing the Workgraph task
 
-## Ready For Braydon
+## Ready For the user
 
 The non-UI system is ready for review when:
 

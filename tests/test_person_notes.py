@@ -52,7 +52,7 @@ def _insert_person_with_relationship(
 
 def test_person_note_is_recorded_listed_and_visible_in_dossier(database_url):
     run_migrations(database_url)
-    name = f"Patrick Sharkey {uuid4().hex}"
+    name = f"Alice Parker {uuid4().hex}"
     email = f"pat-{uuid4().hex}@example.com"
     _insert_person_with_relationship(
         database_url,
@@ -65,8 +65,8 @@ def test_person_note_is_recorded_listed_and_visible_in_dossier(database_url):
         person_ref=name,
         note_kind="context_fit",
         applies_to="small_consulting_firm_discovery",
-        note="Patrick is Braydon's accountant and is not a good fit for this network-discovery context.",
-        metadata={"source_utterance": "patrick is my accountant"},
+        note="Alice is the user's accountant and is not a good fit for this network-discovery context.",
+        metadata={"source_utterance": "alice is my accountant"},
     )
 
     assert note["person_email"] == email
@@ -92,7 +92,7 @@ def test_history_backed_search_includes_person_notes(database_url):
     email = f"pat@{domain}"
     _insert_person_with_relationship(
         database_url,
-        name="Patrick Sharkey",
+        name="Alice Parker",
         email=email,
         interaction_count=20,
     )
@@ -114,7 +114,7 @@ def test_history_backed_search_includes_person_notes(database_url):
         person_ref=email,
         note_kind="context_fit",
         applies_to="small_consulting_firm_discovery",
-        note="Not a useful lead for small consulting firm discovery; this is Braydon's accountant.",
+        note="Not a useful lead for small consulting firm discovery; this is the user's accountant.",
     )
 
     results = search_history_backed_people(

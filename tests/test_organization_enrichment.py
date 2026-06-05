@@ -184,7 +184,7 @@ def test_history_backed_organization_worklist_ranks_companies_by_direct_history(
         title="Medical Communications Consultant",
         company=lower_company,
     )
-    materialize_exact_emails(database_url, skipped_domains={"intempio.com"})
+    materialize_exact_emails(database_url, skipped_domains={"examplecorp.com"})
     ingest_msgvault_sender_rows(
         database_url,
         [
@@ -195,7 +195,7 @@ def test_history_backed_organization_worklist_ranks_companies_by_direct_history(
             {"email": "personal@gmail.com", "display_name": "Personal Mail", "message_count": 99},
         ],
         self_aliases=set(),
-        skipped_domains={"gmail.com", "intempio.com"},
+        skipped_domains={"gmail.com", "examplecorp.com"},
     )
     materialize_msgvault_senders(database_url)
     upsert_source_event(
@@ -221,13 +221,13 @@ def test_history_backed_organization_worklist_ranks_companies_by_direct_history(
     materialize_calendar_events(
         database_url,
         self_aliases={"user@examplecorp.com"},
-        skipped_domains={"intempio.com"},
+        skipped_domains={"examplecorp.com"},
     )
 
     rows = history_backed_organization_worklist(
         database_url,
         limit=1000,
-        skipped_domains={"gmail.com", "intempio.com"},
+        skipped_domains={"gmail.com", "examplecorp.com"},
         as_of=datetime(2026, 5, 13, tzinfo=UTC),
     )
 
@@ -261,17 +261,17 @@ def test_history_backed_organization_worklist_excludes_known_non_target_domains_
     ingest_msgvault_sender_rows(
         database_url,
         [
-            {"email": "one@rvibe.com", "display_name": "Rvibe Person", "message_count": 50},
+            {"email": "one@demo-partner.com", "display_name": "Demo Partner Person", "message_count": 50},
             {
-                "email": "two@thepracticalaccountant.com",
+                "email": "two@example-service.com",
                 "display_name": "Accountant Person",
                 "message_count": 40,
             },
-            {"email": "three@lehigh.edu", "display_name": "Lehigh Person", "message_count": 30},
-            {"email": "four@go2impact.com", "display_name": "Impact Person", "message_count": 20},
-            {"email": "five@intempio.us", "display_name": "Intempio US Person", "message_count": 10},
-            {"email": "six@intempio.com", "display_name": "Intempio Person", "message_count": 9},
-            {"email": "seven@mcco.us", "display_name": "MCCO Person", "message_count": 8},
+            {"email": "three@example-university.edu", "display_name": "Example University Person", "message_count": 30},
+            {"email": "four@example-consulting.com", "display_name": "Example Consulting Person", "message_count": 20},
+            {"email": "five@examplecorp.com", "display_name": "ExampleCorp US Person", "message_count": 10},
+            {"email": "six@examplecorp.com", "display_name": "ExampleCorp Person", "message_count": 9},
+            {"email": "seven@example-venture.com", "display_name": "Example Venture Person", "message_count": 8},
             {"email": "eight@linkedin.com", "display_name": "LinkedIn Notification", "message_count": 7},
         ],
         self_aliases=set(),
@@ -282,13 +282,13 @@ def test_history_backed_organization_worklist_excludes_known_non_target_domains_
     rows = history_backed_organization_worklist(database_url, limit=1000)
 
     domains = {row["domain"] for row in rows}
-    assert "rvibe.com" not in domains
-    assert "thepracticalaccountant.com" not in domains
-    assert "lehigh.edu" not in domains
-    assert "go2impact.com" not in domains
-    assert "intempio.us" not in domains
-    assert "intempio.com" not in domains
-    assert "mcco.us" not in domains
+    assert "demo-partner.com" not in domains
+    assert "example-service.com" not in domains
+    assert "example-university.edu" not in domains
+    assert "example-consulting.com" not in domains
+    assert "examplecorp.com" not in domains
+    assert "examplecorp.com" not in domains
+    assert "example-venture.com" not in domains
     assert "linkedin.com" not in domains
 
 
@@ -317,7 +317,7 @@ def test_history_backed_organization_worklist_filters_system_senders_and_dedupes
                 trust_role="identity/context seed",
             ),
         )
-    materialize_exact_emails(database_url, skipped_domains={"intempio.com"})
+    materialize_exact_emails(database_url, skipped_domains={"examplecorp.com"})
     ingest_msgvault_sender_rows(
         database_url,
         [

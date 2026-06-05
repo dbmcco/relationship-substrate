@@ -6,7 +6,7 @@ Scope: New `relationship-substrate` repo under `/home/user/projects/experiments`
 
 ## 1. Purpose
 
-Build a Python/Postgres/pgvector substrate for Braydon's personal and professional relationship intelligence.
+Build a Python/Postgres/pgvector substrate for the user's personal and professional relationship intelligence.
 
 The system should ingest real relationship evidence, preserve provenance, resolve people and organizations, maintain canonical network records, and auto-commit auditable model-interpreted relationship state. Product surfaces such as dossiers, network maps, freshness queues, meeting prep, and goal-driven recommendations should be projections over the substrate rather than the substrate's first implementation concern.
 
@@ -31,7 +31,7 @@ This repo owns:
 - substrate read models
 - exports/adapters for State System and Graph CRM
 
-`lfw-ai-graph-crm` is reference material and a possible consumer, not the architecture owner. `state-system` provides compatible interpretation, governance, and read-model concepts, but should not be forced to own low-level ingestion or canonical graph storage.
+`example-graph-crm` is reference material and a possible consumer, not the architecture owner. `state-system` provides compatible interpretation, governance, and read-model concepts, but should not be forced to own low-level ingestion or canonical graph storage.
 
 ## 3. Runtime And Stack
 
@@ -83,7 +83,7 @@ Models own:
 - relationship health
 - relationship freshness interpretation
 - personal/professional context
-- overlap with Braydon's goals, skills, and interests
+- overlap with the user's goals, skills, and interests
 - open-loop meaning
 - discussion entry points
 - recommendations and "why now" reasoning
@@ -108,7 +108,7 @@ Code must not hide semantic judgment in regexes, keyword lists, fixed scoring fo
 - `organization`: canonical company, institution, group, fund, school, or other organization.
 - `contact_channel`: email, LinkedIn URL, phone, social URL, or other contact channel.
 - `affiliation`: person-to-organization relationship with role/title/source/confidence/provenance.
-- `relationship_edge`: relationship between Braydon and another person for v1, with space for person-person edges later.
+- `relationship_edge`: relationship between the user and another person for v1, with space for person-person edges later.
 - `interaction`: email, LinkedIn message, calendar meeting, note, browser capture, imported historical event, or other touchpoint.
 - `identity_candidate`: unresolved or proposed link/merge between source identities and canonical people/orgs.
 
@@ -116,7 +116,7 @@ Code must not hide semantic judgment in regexes, keyword lists, fixed scoring fo
 
 - `person_state`: who this person appears to be, current professional/personal context, interests, skills, and uncertainties.
 - `relationship_state`: relationship health, freshness, history shape, overlap, trust/context, and next useful move.
-- `goal_state`: Braydon's current goals/projects/workstreams for recommendation context.
+- `goal_state`: the user's current goals/projects/workstreams for recommendation context.
 - `open_loop`: commitments, follow-ups, unanswered questions, promised intros, stale threads, and opportunities to reconnect.
 - `freshness_state`: last meaningful touch, active/sleeping/stale interpretation, and rationale.
 - `discussion_entry_point`: possible topic, question, ask, or reconnection angle with evidence and risk notes.
@@ -143,7 +143,7 @@ Each imported fact gets a source posture:
 - `derived_interpretation`: model-generated relationship state, open loop, discussion entry point, or operating picture.
 - `unknown_upstream`: useful source, but unclear whether it came from memory, email, CRM, import, or inference.
 
-For Next Up workbooks such as `people.xlsx`, `Intempio CRM people.xlsx`, `Intempio CRM people import.xlsx`, `Intempio CRM companies.xlsx`, and `LDA_Clients.csv`, default posture is:
+For Next Up workbooks such as `people.xlsx`, `ExampleCorp CRM people.xlsx`, `ExampleCorp CRM people import.xlsx`, `ExampleCorp CRM companies.xlsx`, and `LDA_Clients.csv`, default posture is:
 
 ```text
 source_type = curated_export
@@ -247,7 +247,7 @@ Required checks:
 ## 10. Risks
 
 - msgvault contains automated/system senders; source classification must be evidence-backed and revisable.
-- Historical aliases across Intempio, rvibe, mcco, LightForge Works, Synthyra, and personal Gmail need explicit self-identity handling.
+- Historical aliases across ExampleCorp, demopartner, Example Venture, LightLabs, ExampleCorp, and personal Gmail need explicit self-identity handling.
 - Old exports may contain inferred or stale data; they should support identity/context, not relationship truth.
 - Model costs can grow quickly if every email is interpreted. V1 should mechanically profile first, then send bounded evidence packets to the model.
 - If Graph CRM assumptions leak into the substrate, the architecture may drift toward CRM workflows instead of general relationship intelligence.
@@ -258,7 +258,7 @@ Required checks:
 - Choose package management (`uv` is preferred unless repo standards point elsewhere).
 - Choose DB access layer: direct `psycopg` with SQL files versus SQLAlchemy Core.
 - Define local database name and migration runner.
-- Define self-identity model for Braydon's known email aliases and source accounts.
+- Define self-identity model for the user's known email aliases and source accounts.
 - Define the exact State System-compatible `relationship_operating_picture` schema.
 - Decide whether the first model proposal path is fixture-only or uses live model calls behind the central registry.
 

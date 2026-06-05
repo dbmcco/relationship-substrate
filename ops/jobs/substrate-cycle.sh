@@ -9,7 +9,7 @@ REPORT_DIR="output/jobs/${RUN_ID}"
 mkdir -p "$REPORT_DIR" output/ops output/autonomous
 
 DEFAULT_NEXT_UP="/data/contacts.xlsx"
-DEFAULT_CALENDAR_PATHS="output/ops/calendar-mcco-20180101-20260514.json:output/ops/calendar-intempio-20180101-20260514.json:output/ops/calendar-gmail-20240101-20260514.json"
+DEFAULT_CALENDAR_PATHS="output/ops/calendar-personal-20180101-20260514.json:output/ops/calendar-work-20180101-20260514.json:output/ops/calendar-main-20240101-20260514.json"
 
 NEXT_UP_PATHS="${RELATIONSHIP_SUBSTRATE_NEXT_UP_PATHS:-$DEFAULT_NEXT_UP}"
 CALENDAR_PATHS="${RELATIONSHIP_SUBSTRATE_CALENDAR_PATHS:-$DEFAULT_CALENDAR_PATHS}"

@@ -2,7 +2,7 @@
 
 ## North Star
 
-The finished system lets Braydon ask a goal-oriented network question and review useful, current, evidence-backed answers without thinking about ingestion.
+The finished system lets the user ask a goal-oriented network question and review useful, current, evidence-backed answers without thinking about ingestion.
 
 Example:
 
@@ -87,7 +87,7 @@ Give me five people who are consultants, who are at firms that have around ten p
 
 The answer must distinguish:
 
-- actual company size from how many people Braydon knows at the company
+- actual company size from how many people the user knows at the company
 - relationship evidence from organization enrichment
 - internal evidence from current external research
 - model interpretation from stored facts
@@ -366,4 +366,4 @@ Acceptance:
 
 ## Completion Signal
 
-The project is complete enough for daily use when Braydon can ask a network goal, review ranked relationship packets, approve or reject draft outreach, and see health/freshness status without manually orchestrating ingest, enrichment, tone analysis, or research commands.
+The project is complete enough for daily use when the user can ask a network goal, review ranked relationship packets, approve or reject draft outreach, and see health/freshness status without manually orchestrating ingest, enrichment, tone analysis, or research commands.

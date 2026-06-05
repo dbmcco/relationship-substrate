@@ -203,7 +203,7 @@ def test_materialize_curated_contact_preserves_existing_organization_enrichment(
 def test_materialize_exact_emails_skips_configured_domains(database_url):
     run_migrations(database_url)
     unique = uuid4().hex
-    skipped_email = f"skip-{unique}@intempio.com"
+    skipped_email = f"skip-{unique}@examplecorp.com"
     kept_email = f"keep-{unique}@example.com"
     for row_number, email in enumerate([skipped_email, kept_email], start=2):
         upsert_source_event(
@@ -223,7 +223,7 @@ def test_materialize_exact_emails_skips_configured_domains(database_url):
             ),
         )
 
-    stats = materialize_exact_emails(database_url, skipped_domains={"intempio.com"})
+    stats = materialize_exact_emails(database_url, skipped_domains={"examplecorp.com"})
 
     assert stats["skipped_domain"] >= 1
     assert stats["materialized"] >= 1

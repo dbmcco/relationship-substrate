@@ -28,9 +28,9 @@ Defaults:
 
 - next_up seed: `/data/contacts.xlsx`
 - calendar exports:
-  - `output/ops/calendar-mcco-20180101-20260514.json`
-  - `output/ops/calendar-intempio-20180101-20260514.json`
-  - `output/ops/calendar-gmail-20240101-20260514.json`
+  - `output/ops/calendar-personal-20180101-20260514.json`
+  - `output/ops/calendar-work-20180101-20260514.json`
+  - `output/ops/calendar-main-20240101-20260514.json`
 
 Override with colon-separated paths:
 
