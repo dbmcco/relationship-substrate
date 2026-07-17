@@ -8,7 +8,8 @@ inspect, and change them without relying on hidden machine scheduler state.
 - `substrate-cycle.sh`: one operational cycle. Refreshes msgvault/calendar/next_up materialization,
   writes status, organization enrichment worklist, and the current North Star tone-state worklist.
   Local embedding backfill is disabled by default for laptop power safety.
-- `substrate-loop.sh`: runs `substrate-cycle.sh` repeatedly. Default interval: 6 hours.
+- `substrate-loop.sh`: runs `substrate-cycle.sh` repeatedly. Default interval: 6 hours. This is intended for interactive or Herdr use.
+- `substrate-fleet-refresh.sh`: runs one bounded `substrate-cycle.sh` and then the State System b-state fleet refresh. macOS launchd runs this wrapper at login and every 6 hours through `com.dbmcco.state-system.b-state.fleet-refresh`.
 - `nightly-worklists.sh`: exports the current enrichment and tone worklists without mutating ingest.
   It also runs a bounded organization research pass. Default: 25 organizations, apply enabled.
   Local-Ollama tone/tenor and relationship-strength passes are disabled by default for
@@ -21,6 +22,24 @@ inspect, and change them without relying on hidden machine scheduler state.
   refreshes and enables bounded organization-news research. If local-Ollama tone/strength work is
   disabled, those queues remain visible but the loop sleeps on the 12-hour interval once
   organization enrichment is drained, until an explicitly enabled local-model pass drains them.
+
+## macOS launchd
+
+The durable scheduler is the existing LaunchAgent at
+`~/Library/LaunchAgents/com.dbmcco.state-system.b-state.fleet-refresh.plist`. It runs the
+combined wrapper every six hours and writes scheduler output to
+`~/Library/Logs/state-system-fleet-refresh/b-state.out.log` and
+`~/Library/Logs/state-system-fleet-refresh/b-state.err.log`.
+
+Inspect or reload it with:
+
+```bash
+launchctl print "gui/$(id -u)/com.dbmcco.state-system.b-state.fleet-refresh"
+launchctl bootout "gui/$(id -u)/com.dbmcco.state-system.b-state.fleet-refresh"
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.dbmcco.state-system.b-state.fleet-refresh.plist"
+```
+
+The Herdr-only `substrate-loop.sh` should not run at the same time as the launchd wrapper.
 
 ## Inputs
 
