@@ -79,6 +79,10 @@ class Settings:
         "MSGVAULT_CONFIG",
         "",
     )
+    msgvault_daemon_url: str = os.environ.get(
+        "MSGVAULT_DAEMON_URL",
+        "http://127.0.0.1:8080",
+    )
     msgvault_timeout_seconds: int = int(
         os.environ.get("MSGVAULT_TIMEOUT_SECONDS", "120")
     )
