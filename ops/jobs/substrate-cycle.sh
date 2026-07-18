@@ -4,6 +4,19 @@ set -euo pipefail
 ROOT_DIR="${RELATIONSHIP_SUBSTRATE_ROOT:-/opt/relationship-substrate}"
 cd "$ROOT_DIR"
 
+COORDINATION_LOCK_DIR="${RELATIONSHIP_SUBSTRATE_COORDINATION_LOCK_DIR:-/Users/braydon/projects/personal/b-state/fleet-refresh/.relationship-substrate-cycle.lock}"
+mkdir -p "$(dirname "$COORDINATION_LOCK_DIR")"
+if ! mkdir "$COORDINATION_LOCK_DIR" 2>/dev/null; then
+  echo "relationship substrate cycle already running: $COORDINATION_LOCK_DIR" >&2
+  exit 0
+fi
+printf '%s\n' "$$" > "${COORDINATION_LOCK_DIR}/pid"
+cleanup_coordination_lock() {
+  rm -f "${COORDINATION_LOCK_DIR}/pid"
+  rmdir "$COORDINATION_LOCK_DIR" 2>/dev/null || true
+}
+trap cleanup_coordination_lock EXIT INT TERM
+
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 REPORT_DIR="output/jobs/${RUN_ID}"
 mkdir -p "$REPORT_DIR" output/ops output/autonomous

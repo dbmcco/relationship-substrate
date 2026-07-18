@@ -9,7 +9,7 @@ inspect, and change them without relying on hidden machine scheduler state.
   writes status, organization enrichment worklist, and the current North Star tone-state worklist.
   Local embedding backfill is disabled by default for laptop power safety.
 - `substrate-loop.sh`: runs `substrate-cycle.sh` repeatedly. Default interval: 6 hours. This is intended for interactive or Herdr use.
-- `substrate-fleet-refresh.sh`: runs one bounded `substrate-cycle.sh` and then the State System b-state fleet refresh. macOS launchd runs this wrapper at login and every 6 hours through `com.dbmcco.state-system.b-state.fleet-refresh`.
+- `substrate-fleet-refresh.sh`: manual recovery wrapper that runs one bounded `substrate-cycle.sh` and then the State System b-state fleet refresh. The durable launchd jobs use separate cadences instead.
 - `nightly-worklists.sh`: exports the current enrichment and tone worklists without mutating ingest.
   It also runs a bounded organization research pass. Default: 25 organizations, apply enabled.
   Local-Ollama tone/tenor and relationship-strength passes are disabled by default for
@@ -25,21 +25,30 @@ inspect, and change them without relying on hidden machine scheduler state.
 
 ## macOS launchd
 
-The durable scheduler is the existing LaunchAgent at
-`~/Library/LaunchAgents/com.dbmcco.state-system.b-state.fleet-refresh.plist`. It runs the
-combined wrapper every six hours and writes scheduler output to
-`~/Library/Logs/state-system-fleet-refresh/b-state.out.log` and
-`~/Library/Logs/state-system-fleet-refresh/b-state.err.log`.
+The durable schedulers are two one-shot LaunchAgents:
+
+- `~/Library/LaunchAgents/com.dbmcco.relationship-substrate.refresh.plist` runs one bounded
+  Relationship Substrate cycle at login and every six hours. Its logs are under
+  `~/Library/Logs/relationship-substrate/`.
+- `~/Library/LaunchAgents/com.dbmcco.state-system.b-state.fleet-refresh.plist` runs the personal
+  b-state fleet refresh at login and every hour. Its logs are under
+  `~/Library/Logs/state-system-fleet-refresh/`.
+
+The separate cadences are intentional: the Relationship Substrate corpus has a seven-day
+content watermark, while the b-state package has a one-hour freshness policy.
 
 Inspect or reload it with:
 
 ```bash
+launchctl print "gui/$(id -u)/com.dbmcco.relationship-substrate.refresh"
 launchctl print "gui/$(id -u)/com.dbmcco.state-system.b-state.fleet-refresh"
+launchctl bootout "gui/$(id -u)/com.dbmcco.relationship-substrate.refresh"
 launchctl bootout "gui/$(id -u)/com.dbmcco.state-system.b-state.fleet-refresh"
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.dbmcco.relationship-substrate.refresh.plist"
 launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.dbmcco.state-system.b-state.fleet-refresh.plist"
 ```
 
-The Herdr-only `substrate-loop.sh` should not run at the same time as the launchd wrapper.
+The Herdr-only `substrate-loop.sh` should not run at the same time as the launchd wrapper. The launchd job supplies the explicit MsgVault home and config paths; the adapter uses `--local` and bounds each client call with `MSGVAULT_TIMEOUT_SECONDS` (default 120 seconds), so an unavailable archive is reported as a failed cycle instead of holding the coordination lock indefinitely.
 
 ## Inputs
 

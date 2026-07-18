@@ -33,6 +33,7 @@ def test_sender_command_uses_supported_msgvault_analytics_cli():
     assert command[0] == "msgvault"
     assert command[1] == "--home"
     assert command[3] == "--config"
+    assert command[5] == "--local"
     assert command[-4:] == ["list-senders", "--json", "--limit", "10"]
 
 
@@ -42,6 +43,20 @@ def test_domain_command_uses_supported_msgvault_analytics_cli():
     command = adapter.build_domain_command(5)
 
     assert command[-4:] == ["list-domains", "--json", "--limit", "5"]
+
+
+def test_msgvault_client_uses_bounded_timeout(monkeypatch):
+    adapter = MsgvaultAdapter(Settings(msgvault_timeout_seconds=7))
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(command, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert adapter.top_sender_candidates(limit=1) == []
+    assert captured["timeout"] == 7
 
 
 def test_parse_msgvault_json_output_tolerates_cli_status_logs():
@@ -74,10 +89,10 @@ time=2026-05-13T16:27:19-04:00 level=INFO msg="msgvault exit"
 def test_search_messages_treats_empty_or_no_result_output_as_empty(monkeypatch, stdout):
     adapter = MsgvaultAdapter(Settings())
 
-    def fake_run(command, *, check, capture_output, text):
-        assert check is True
-        assert capture_output is True
-        assert text is True
+    def fake_run(command, **kwargs):
+        assert kwargs["check"] is True
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -90,7 +105,7 @@ def test_search_messages_treats_empty_or_no_result_output_as_empty(monkeypatch, 
 def test_search_messages_rejects_malformed_non_empty_output(monkeypatch):
     adapter = MsgvaultAdapter(Settings())
 
-    def fake_run(command, *, check, capture_output, text):
+    def fake_run(command, **kwargs):
         return subprocess.CompletedProcess(command, 0, stdout="not json\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -103,7 +118,7 @@ def test_correspondence_messages_returns_empty_when_both_searches_have_no_result
     adapter = MsgvaultAdapter(Settings())
     commands = []
 
-    def fake_run(command, *, check, capture_output, text):
+    def fake_run(command, **kwargs):
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="No messages found.\n", stderr="")
 

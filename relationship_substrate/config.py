@@ -79,6 +79,9 @@ class Settings:
         "MSGVAULT_CONFIG",
         "",
     )
+    msgvault_timeout_seconds: int = int(
+        os.environ.get("MSGVAULT_TIMEOUT_SECONDS", "120")
+    )
     self_email_aliases: tuple[str, ...] = _csv_env(
         "RELATIONSHIP_SUBSTRATE_SELF_EMAILS",
         DEFAULT_SELF_EMAIL_ALIASES,

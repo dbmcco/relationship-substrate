@@ -56,6 +56,7 @@ class MsgvaultAdapter:
             self.settings.msgvault_home,
             "--config",
             self.settings.msgvault_config,
+            "--local",
         ]
 
     def build_sender_command(self, limit: int = 100) -> list[str]:
@@ -68,7 +69,13 @@ class MsgvaultAdapter:
         return [*self._base_command(), "search", query, "--json", "--limit", str(int(limit))]
 
     def _run_json(self, command: list[str], *, allow_empty_result: bool = False) -> Any:
-        completed = subprocess.run(command, check=True, capture_output=True, text=True)
+        completed = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=self.settings.msgvault_timeout_seconds,
+        )
         return parse_msgvault_json_output(completed.stdout, allow_empty_result=allow_empty_result)
 
     def top_sender_candidates(self, limit: int = 100) -> list[dict[str, Any]]:
