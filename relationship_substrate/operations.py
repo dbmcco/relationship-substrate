@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -849,6 +850,9 @@ def run_network_pipeline(
     msgvault: dict[str, object] = {"skipped": skip_msgvault}
     if not skip_msgvault:
         adapter = MsgvaultAdapter(settings)
+        # One cycle = one process: every adapter below shares this log.
+        # Clear it so the summary below counts this cycle only.
+        adapter.malformed_log.clear()
         sender_rows = adapter.top_sender_candidates(sender_limit)
         domain_rows = adapter.top_domain_candidates(sender_limit)
         msgvault_profile = {"senders": sender_rows, "domains": domain_rows}
@@ -883,6 +887,17 @@ def run_network_pipeline(
             correspondence_ingestions,
         )
         correspondence_materialization = materialize_msgvault_correspondence(settings.database_url)
+        malformed_skips = len(adapter.malformed_log)
+        if malformed_skips:
+            # Per-cycle "how many": every skip was already logged as it
+            # happened (what + why); this is the cycle total for the run
+            # report. A bad payload degrades that source's coverage, it
+            # can no longer take the cycle down.
+            logging.getLogger(__name__).warning(
+                "msgvault: skipped %d malformed payload(s) this cycle: %s",
+                malformed_skips,
+                "; ".join(adapter.malformed_log.entries),
+            )
         msgvault = {
             "skipped": False,
             "sender_candidates": len(sender_rows),
@@ -892,6 +907,7 @@ def run_network_pipeline(
             "correspondence_seed_emails": seed_emails,
             "correspondence_ingestions": correspondence_ingestions,
             "correspondence_materialization": correspondence_materialization,
+            "malformed_payloads_skipped": malformed_skips,
         }
 
     calendar_ingestions = [_ingest_calendar(settings.database_url, path) for path in calendar_paths]

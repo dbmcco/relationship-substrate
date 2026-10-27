@@ -1,10 +1,13 @@
 import json
+import logging
 from typing import Any
 
 import pytest
 
 from relationship_substrate.adapters.msgvault import (
+    MalformedPayloadLog,
     MsgvaultAdapter,
+    _CYCLE_LOG,
     parse_msgvault_json_output,
     parse_query_output,
 )
@@ -16,7 +19,10 @@ class _FakeResponse:
     """Minimal stand-in for urllib's HTTPResponse context manager."""
 
     def __init__(self, payload: Any) -> None:
-        self._data = json.dumps(payload).encode("utf-8")
+        if isinstance(payload, (bytes, bytearray)):
+            self._data = bytes(payload)
+        else:
+            self._data = json.dumps(payload).encode("utf-8")
 
     def read(self) -> bytes:
         return self._data
@@ -139,12 +145,31 @@ def test_http_search_returns_empty_when_no_results(monkeypatch):
     assert adapter.search_messages("from:missing@example.com") == []
 
 
-def test_http_search_rejects_malformed_payload(monkeypatch):
-    adapter = MsgvaultAdapter(Settings())
+def test_http_search_skips_and_counts_malformed_payload(monkeypatch, caplog):
+    """2026-10-27 crash class: a malformed search payload raised ValueError
+    and took the whole substrate cycle down mid-run. It must instead be
+    skipped, counted, and logged -- never raised."""
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
     _patch_urlopen(monkeypatch, {"unexpected": True})
 
-    with pytest.raises(ValueError, match="malformed results payload"):
-        adapter.search_messages("from:broken@example.com")
+    with caplog.at_level(logging.WARNING, logger="relationship_substrate.adapters.msgvault"):
+        rows = adapter.search_messages("from:broken@example.com")
+
+    assert rows == []
+    assert len(log) == 1
+    assert "results" in log.entries[0]
+    assert any("malformed payload" in record.message for record in caplog.records)
+
+
+def test_http_search_skips_and_counts_non_json_payload(monkeypatch):
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(monkeypatch, b"<html>gateway error</html>")
+
+    assert adapter.search_messages("from:down@example.com") == []
+    assert len(log) == 1
+    assert "not valid JSON" in log.entries[0]
 
 
 # --------------------------------------------------------------------------
@@ -237,3 +262,113 @@ def test_http_calls_use_configured_timeout(monkeypatch):
     adapter._http_query("SELECT 1")
 
     assert captured.get("timeout") == 7
+
+
+# --------------------------------------------------------------------------
+# Malformed-payload tolerance (2026-10-27 crash class)
+# --------------------------------------------------------------------------
+def test_http_query_skips_and_counts_non_json_payload(monkeypatch):
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(monkeypatch, b"not json at all")
+
+    assert adapter._http_query("SELECT 1") == []
+    assert len(log) == 1
+    assert "not valid JSON" in log.entries[0]
+
+
+def test_http_query_skips_and_counts_non_object_payload(monkeypatch):
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(monkeypatch, [1, 2, 3])
+
+    assert adapter._http_query("SELECT 1") == []
+    assert len(log) == 1
+    assert "not a JSON object" in log.entries[0]
+
+
+def test_http_query_skips_rows_that_do_not_match_columns(monkeypatch):
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(monkeypatch, {"columns": ["email", "count"], "rows": [["a@x.com", 5], ["b@x.com"]]})
+
+    rows = adapter._http_query("SELECT ...")
+
+    assert rows == [{"email": "a@x.com", "count": 5}]
+    assert len(log) == 1
+    assert "declared columns" in log.entries[0]
+
+
+def test_correspondence_messages_skips_and_counts_rows_without_message_id(monkeypatch):
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(
+        monkeypatch,
+        {
+            "results": [
+                {"id": 7, "sent_at": "2026-01-01T00:00:00Z"},
+                {"subject": "row with no id"},
+            ]
+        },
+    )
+
+    rows = adapter.correspondence_messages("a@x.com", limit=10)
+
+    assert [row["id"] for row in rows] == [7]
+    # from: and to: searches each return the malformed row once.
+    assert len(log) == 2
+    assert all("no message id" in entry for entry in log.entries)
+
+
+def test_parse_query_output_skips_rows_missing_required_keys():
+    log = MalformedPayloadLog()
+    payload = [
+        {"key": "a@x.com", "count": 3, "total_size": 10},
+        {"key": "b@x.com"},  # no count
+        {"count": 4},  # no key
+        "not even a dict",
+    ]
+
+    rows = parse_query_output(payload, key_name="email", malformed_log=log)
+
+    assert rows == [
+        {
+            "email": "a@x.com",
+            "message_count": 3,
+            "total_size": 10,
+            "attachment_size": 0,
+        }
+    ]
+    assert len(log) == 3
+
+
+def test_default_malformed_log_is_shared_per_cycle():
+    # One substrate cycle is one process: every adapter constructed in the
+    # cycle must share one log so the cycle can report a single total.
+    one = MsgvaultAdapter(Settings())
+    two = MsgvaultAdapter(Settings())
+
+    assert one.malformed_log is two.malformed_log
+    assert one.malformed_log is _CYCLE_LOG
+
+
+def test_ingest_msgvault_correspondence_survives_malformed_payload(monkeypatch):
+    """The exact 2026-10-27 crash: a malformed search payload raised
+    ValueError inside _ingest_msgvault_correspondence and killed the
+    substrate cycle mid-run (while holding the coordination lock). The
+    ingest must return empty stats, count the skip in the cycle log,
+    and never raise."""
+    from relationship_substrate.operations import _ingest_msgvault_correspondence
+
+    _CYCLE_LOG.clear()
+    _patch_urlopen(monkeypatch, {"unexpected": True})
+
+    stats = _ingest_msgvault_correspondence(
+        Settings(), email="broken@example.com", limit=5
+    )
+
+    assert stats["events_seen"] == 0
+    assert stats["events_upserted"] == 0
+    # from: and to: searches both hit the malformed payload.
+    assert len(_CYCLE_LOG) == 2
+    _CYCLE_LOG.clear()
