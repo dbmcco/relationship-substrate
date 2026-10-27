@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import urllib.error
@@ -51,11 +52,40 @@ _CYCLE_LOG = MalformedPayloadLog()
 
 
 def _payload_preview(value: object) -> str:
-    """Short, safe-to-log preview of a payload fragment."""
-    text = repr(value)
-    if len(text) > 120:
-        return text[:120] + "..."
-    return text
+    """Content-free payload fingerprint for log lines.
+
+    Never interpolates payload content: msgvault rows carry personal
+    correspondence data (subjects, addresses, body text) and the
+    fingerprint goes into log files. Logged metadata only: the type
+    name, a length, dict key NAMES (never values), and a sha256 prefix
+    so the same offending payload can be correlated across log lines.
+    The content feeds only the hash input -- it never appears in the
+    output.
+    """
+    hasher = hashlib.sha256()
+    if isinstance(value, bytes):
+        hasher.update(value)
+        shape = f"type=bytes len={len(value)}"
+    elif isinstance(value, str):
+        hasher.update(value.encode("utf-8", errors="replace"))
+        shape = f"type=str len={len(value)}"
+    elif isinstance(value, dict):
+        try:
+            hasher.update(json.dumps(value, sort_keys=True, default=str).encode("utf-8"))
+        except (TypeError, ValueError):
+            hasher.update(repr(sorted(str(key) for key in value)).encode("utf-8"))
+        key_names = ",".join(sorted(str(key) for key in value))
+        shape = f"type=dict len={len(value)} keys=[{key_names}]"
+    elif isinstance(value, (list, tuple)):
+        try:
+            hasher.update(json.dumps(value, sort_keys=True, default=str).encode("utf-8"))
+        except (TypeError, ValueError):
+            hasher.update(repr(len(value)).encode("utf-8"))
+        shape = f"type={type(value).__name__} len={len(value)}"
+    else:
+        hasher.update(repr(value).encode("utf-8", errors="replace"))
+        shape = f"type={type(value).__name__}"
+    return f"{shape} sha256={hasher.hexdigest()[:12]}"
 
 
 def parse_query_output(

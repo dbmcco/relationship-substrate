@@ -372,3 +372,68 @@ def test_ingest_msgvault_correspondence_survives_malformed_payload(monkeypatch):
     # from: and to: searches both hit the malformed payload.
     assert len(_CYCLE_LOG) == 2
     _CYCLE_LOG.clear()
+
+
+# --------------------------------------------------------------------------
+# Content-free payload fingerprints (privacy review fix)
+# --------------------------------------------------------------------------
+def test_payload_preview_is_content_free():
+    from relationship_substrate.adapters.msgvault import _payload_preview
+
+    row = {
+        "from_email": "secret.person@example.com",
+        "subject": "Confidential Merger Terms",
+        "body": "we should acquire at $10/share",
+    }
+    preview = _payload_preview(row)
+
+    # No field VALUES may appear: msgvault rows are personal
+    # correspondence data and the preview goes into log files.
+    assert "secret.person@example.com" not in preview
+    assert "Confidential Merger Terms" not in preview
+    assert "acquire" not in preview
+    # Content-free metadata that IS expected: type, length, key names
+    # (never values), and a sha256 prefix for correlation.
+    assert "dict" in preview
+    assert "from_email" in preview
+    assert "subject" in preview
+    assert "sha256=" in preview
+
+
+def test_payload_preview_is_deterministic_for_correlation():
+    from relationship_substrate.adapters.msgvault import _payload_preview
+
+    one = _payload_preview({"id": 1, "note": "same payload"})
+    two = _payload_preview({"note": "same payload", "id": 1})
+
+    assert one == two
+    assert _payload_preview({"id": 2, "note": "same payload"}) != one
+
+
+def test_skipped_payload_values_never_reach_logs(monkeypatch, caplog):
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(monkeypatch, {"unexpected": True, "subject": "Secret AcquiCo Deal"})
+
+    with caplog.at_level(logging.WARNING, logger="relationship_substrate.adapters.msgvault"):
+        adapter.search_messages("from:leaky@example.com")
+
+    combined = " ".join(log.entries) + " " + " ".join(
+        record.getMessage() for record in caplog.records
+    )
+    assert "Secret AcquiCo Deal" not in combined
+    assert "leaky@example.com" not in combined
+    assert "sha256=" in combined
+
+
+def test_non_json_payload_content_is_not_logged(monkeypatch):
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(monkeypatch, b"Internal note: buy AcquiCo quietly")
+
+    adapter.search_messages("from:x@example.com")
+
+    entry = log.entries[0]
+    assert "Internal note" not in entry
+    assert "AcquiCo" not in entry
+    assert "sha256=" in entry
