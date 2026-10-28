@@ -437,3 +437,49 @@ def test_non_json_payload_content_is_not_logged(monkeypatch):
     assert "Internal note" not in entry
     assert "AcquiCo" not in entry
     assert "sha256=" in entry
+
+
+# --------------------------------------------------------------------------
+# Zero-hit payloads are not malformed (19:42 proof-cycle finding)
+# --------------------------------------------------------------------------
+def test_http_search_treats_null_results_as_empty(monkeypatch):
+    """2026-10-27 19:42 proof cycle: both skips were the SAME payload --
+    the daemon signals zero hits as results:null. That is an empty
+    result, not a malformed payload; nothing should be counted."""
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(monkeypatch, {"results": None})
+
+    assert adapter.search_messages("from:nobody@example.com") == []
+    assert len(log) == 0
+
+
+def test_http_search_treats_zero_total_without_results_as_empty(monkeypatch):
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(monkeypatch, {"total": 0})
+
+    assert adapter.search_messages("from:nobody@example.com") == []
+    assert len(log) == 0
+
+
+def test_http_search_still_counts_non_list_non_null_results(monkeypatch):
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(monkeypatch, {"results": "corrupted"})
+
+    assert adapter.search_messages("from:x@example.com") == []
+    assert len(log) == 1
+    assert "results" in log.entries[0]
+
+
+def test_correspondence_on_null_results_counts_no_skips(monkeypatch):
+    """The exact 19:42 proof-cycle path: correspondence for an address
+    with no archived mail produced two identical results:null skips.
+    Zero-hit correspondence must be skip-free."""
+    log = MalformedPayloadLog()
+    adapter = MsgvaultAdapter(Settings(), malformed_log=log)
+    _patch_urlopen(monkeypatch, {"results": None})
+
+    assert adapter.correspondence_messages("nobody@example.com", limit=10) == []
+    assert len(log) == 0

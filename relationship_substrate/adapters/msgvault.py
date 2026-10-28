@@ -231,8 +231,25 @@ class MsgvaultAdapter:
         except ValueError:
             self.malformed_log.add("search payload was not valid JSON", context=_payload_preview(raw))
             return []
-        if isinstance(payload, dict) and isinstance(payload.get("results"), list):
-            return payload["results"]
+        if isinstance(payload, dict):
+            results = payload.get("results")
+            if isinstance(results, list):
+                return results
+            if results is None:
+                # Zero-hit responses are not malformed: the daemon signals
+                # "no messages" as results:null (observed in the 2026-10-27
+                # 19:42 proof cycle, where both skips for a correspondence
+                # probe were this same payload), and a results key absent
+                # alongside an explicit zero total is the same answer.
+                # Return an empty result without counting a skip; the
+                # malformed-payload log is reserved for real anomalies.
+                if "results" in payload:
+                    return []
+                total = payload.get(
+                    "total", payload.get("total_results", payload.get("count"))
+                )
+                if isinstance(total, (int, float)) and total == 0:
+                    return []
         self.malformed_log.add("search payload lacked a results list", context=_payload_preview(payload))
         return []
 
